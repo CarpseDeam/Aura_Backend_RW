@@ -3,11 +3,11 @@
 Manages application configuration using Pydantic's BaseSettings.
 
 This module defines a `Settings` class that loads environment variables
-from a `.env` file, providing a centralized and validated source of
+from a .env file, providing a centralized and validated source of
 configuration for the entire application.
 """
 
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings # <-- THIS IS THE FIX
 
 
 class Settings(BaseSettings):
@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     Application settings loaded from environment variables.
 
     Pydantic's BaseSettings class handles the loading and validation of these
-    settings from the environment or a `.env` file.
+    settings from the environment or a .env file.
 
     Attributes:
         DATABASE_URL (str): The connection string for the primary database.
