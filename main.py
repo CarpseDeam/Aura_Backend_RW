@@ -1,36 +1,22 @@
-"""
-Main application file for the Secure API Key Manager.
-
-This file initializes the FastAPI application, includes the necessary API routers,
-and defines a root endpoint.
-"""
-
+# src/main.py
 from typing import Dict
-
 from fastapi import FastAPI
-
-from src.api.auth import router as auth_router
-from src.api.keys import router as keys_router
+from src.api import auth, keys
+from src.db.database import Base, engine
 
 app = FastAPI(
-    title="Secure API Key Manager",
-    description="A robust and secure system for creating, managing, and validating API keys.",
-    version="1.0.0",
+    title="Aura Web Backend",
+    description="The agentic core and user management services for the Aura platform.",
+    version="0.1.0",
 )
 
-# Include the routers from the api modules with appropriate prefixes and tags
-app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
-app.include_router(keys_router, prefix="/api-keys", tags=["API Keys"])
+@app.on_event("startup")
+def on_startup():
+    Base.metadata.create_all(bind=engine)
 
+app.include_router(auth.router)
+app.include_router(keys.router)
 
 @app.get("/", response_model=Dict[str, str], tags=["Root"])
 async def read_root() -> Dict[str, str]:
-    """
-    Root GET endpoint.
-
-    Provides a simple welcome message to verify that the service is running.
-
-    Returns:
-        Dict[str, str]: A dictionary containing a welcome message.
-    """
-    return {"message": "Welcome to the Secure API Key Manager"}
+    return {"message": "Welcome to the Aura API"}
