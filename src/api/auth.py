@@ -1,4 +1,8 @@
 # src/api/auth.py
+"""
+API routes for user authentication, including registration, login (token generation),
+and retrieving the current authenticated user.
+"""
 from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -14,6 +18,21 @@ router = APIRouter(tags=["auth"])
 
 @router.post("/register", response_model=user.User, status_code=status.HTTP_201_CREATED)
 async def register(user_in: user.UserCreate, db: Session = Depends(get_db)) -> models.User:
+    """
+    Handles user registration.
+
+    Creates a new user in the database if the email is not already in use.
+
+    Args:
+        user_in: The user data for registration from the request body.
+        db: The database session dependency.
+
+    Returns:
+        The newly created user's data.
+
+    Raises:
+        HTTPException: If a user with the same email already exists.
+    """
     db_user = crud.get_user_by_email(db, email=user_in.email)
     if db_user:
         raise HTTPException(
@@ -24,6 +43,21 @@ async def register(user_in: user.UserCreate, db: Session = Depends(get_db)) -> m
 
 @router.post("/token", response_model=token.Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)) -> dict:
+    """
+    Authenticates a user and returns a JWT access token.
+
+    Uses OAuth2 password flow. The client sends username and password in a form.
+
+    Args:
+        form_data: The OAuth2 password request form, containing username and password.
+        db: The database session dependency.
+
+    Returns:
+        A dictionary containing the access token and token type.
+
+    Raises:
+        HTTPException: If authentication fails (incorrect email or password).
+    """
     user_auth = security.authenticate_user(db, email=form_data.username, password=form_data.password)
     if not user_auth:
         raise HTTPException(
@@ -36,6 +70,22 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     return {"access_token": access_token, "token_type": "bearer"}
 
 async def get_current_user(token_str: str = Depends(security.oauth2_scheme), db: Session = Depends(get_db)) -> models.User:
+    """
+    Dependency to get the current authenticated user from a JWT token.
+
+    Decodes the JWT token from the Authorization header, validates its claims,
+    and fetches the corresponding user from the database.
+
+    Args:
+        token_str: The JWT token from the Authorization header.
+        db: The database session dependency.
+
+    Returns:
+        The authenticated user model instance.
+
+    Raises:
+        HTTPException: If the token is invalid, expired, or the user is not found.
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -56,4 +106,15 @@ async def get_current_user(token_str: str = Depends(security.oauth2_scheme), db:
 
 @router.get("/users/me", response_model=user.User)
 async def read_users_me(current_user: models.User = Depends(get_current_user)) -> models.User:
+    """
+    Fetches the details of the currently authenticated user.
+
+    This is a protected endpoint that requires a valid JWT access token.
+
+    Args:
+        current_user: The user object injected by the get_current_user dependency.
+
+    Returns:
+        The current user's data.
+    """
     return current_user

@@ -1,8 +1,9 @@
 fastapi
 uvicorn
 pydantic
-pydantic-settings  # <-- ADD THIS LINE
+pydantic-settings
 sqlalchemy
 psycopg2-binary
 passlib[bcrypt]
 python-jose[cryptography]
+python-multipart
