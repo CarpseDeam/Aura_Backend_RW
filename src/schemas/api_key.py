@@ -1,19 +1,25 @@
-"""Pydantic schemas for API Key validation.
-
-This module defines the Pydantic models used for validating and serializing
-API key data in the application's API.
-"""
+# src/schemas/api_key.py
+"""Pydantic schemas for multi-provider API Key validation."""
 
 from pydantic import BaseModel
+from typing import List
 
+class ProviderKeyBase(BaseModel):
+    """Base schema for provider key properties."""
+    provider_name: str
 
-class ApiKey(BaseModel):
-    """Schema for representing an API key.
-
-    This model is used to validate incoming requests that require an API key
-    in the request body.
-
-    Attributes:
-        api_key: The string representation of the API key.
-    """
+class ProviderKeyCreate(ProviderKeyBase):
+    """Schema used when a user submits a new API key."""
     api_key: str
+
+class ProviderKey(ProviderKeyBase):
+    """Schema for representing a configured API key in API responses."""
+    masked_key: str
+
+    class Config:
+        """Pydantic configuration options."""
+        from_attributes = True
+
+class ProviderKeyList(BaseModel):
+    """Schema for returning a list of configured keys."""
+    keys: List[ProviderKey]
