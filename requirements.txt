@@ -1,10 +1,18 @@
-PySide6
-qasync
-qtawesome
-Pygments
-unidiff
+# Web Server & Async
+fastapi
+uvicorn[standard]
+python-dotenv
 aiohttp
-GitPython
+python-multipart
+
+# Database & Auth
+SQLAlchemy
+psycopg2-binary
+passlib[bcrypt]
+python-jose[cryptography]
+cryptography
+
+# AI Core & API Wrappers
 openai
 anthropic
 google-generativeai
@@ -14,23 +22,7 @@ protobuf
 grpcio
 Pillow
 
-# RAG & Vector DB
+# RAG & Vector DB (Essential for the agent)
 chromadb
 sentence-transformers
 langchain-community
-
-# Web Server for local APIs
-fastapi
-uvicorn[standard]
-python-dotenv
-aiohttp
-python-multipart
-
-
-# --- Professional Testing & QA Suite ---
-python-lsp-server[all]
-pytest          # The core testing framework
-pytest-mock     # For creating mock objects (essential for service testing)
-pytest-asyncio  # For running async tests correctly
-pytest-cov      # For measuring test coverage
-ruff            # Modern, high-performance linter and code formatter
