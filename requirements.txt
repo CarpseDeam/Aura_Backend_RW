@@ -3,26 +3,14 @@ fastapi
 uvicorn[standard]
 python-dotenv
 aiohttp
-python-multipart
 
 # Database & Auth
 SQLAlchemy
 psycopg2-binary
 passlib[bcrypt]
 python-jose[cryptography]
-cryptography
 
-# AI Core & API Wrappers
+# AI Core (OpenAI is all we need for this)
 openai
-anthropic
-google-generativeai
-googleapis-common-protos
-proto-plus
-protobuf
-grpcio
-Pillow
-
-# RAG & Vector DB (Essential for the agent)
 chromadb
-sentence-transformers
 langchain-community
