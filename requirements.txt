@@ -14,3 +14,5 @@ python-jose[cryptography]
 openai
 chromadb
 langchain-community
+
+python-multipart
