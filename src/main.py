@@ -1,5 +1,7 @@
-from typing import Dict
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from typing import Dict
+
 from src.api.auth import router as auth_router
 from src.api.keys import router as keys_router
 from src.api.websockets import router as websocket_router
@@ -10,6 +12,25 @@ app = FastAPI(
     description="The agentic core and user management services for the Aura platform.",
     version="1.0.0",
 )
+
+# --- THIS IS THE FIX ---
+# Define the list of "origins" (our VIP list) that are allowed to talk to our backend.
+origins = [
+    "https://snowballannotation.com", # Your production frontend
+    "http://localhost",              # For local development later
+    "http://localhost:8080",         # A common local dev port
+]
+
+# Add the CORSMiddleware to the application
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,           # Allow origins from our VIP list
+    allow_credentials=True,          # Allow cookies (important for auth)
+    allow_methods=["*"],             # Allow all methods (GET, POST, etc.)
+    allow_headers=["*"],             # Allow all headers
+)
+# --- END OF FIX ---
+
 
 # Include the routers from the api modules with appropriate prefixes and tags
 app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
@@ -22,10 +43,6 @@ app.include_router(agent_router, prefix="/agent", tags=["Aura Agent"])
 async def read_root() -> Dict[str, str]:
     """
     Root GET endpoint.
-
     Provides a simple welcome message to verify that the service is running.
-
-    Returns:
-        Dict[str, str]: A dictionary containing a welcome message.
     """
     return {"message": "Welcome to the Aura API Command Center"}
