@@ -9,31 +9,13 @@ from src.api.websockets import router as websocket_router
 from src.api.agent import router as agent_router
 from src.api.assignments import router as assignments_router
 from src.api.missions import router as missions_router
-from src.db.database import Base, engine # Import Base and engine
-
-# --- NEW FUNCTION TO CREATE DATABASE TABLES ---
-def create_db_and_tables():
-    print("Creating database tables...")
-    try:
-        Base.metadata.create_all(bind=engine)
-        print("Database tables created successfully.")
-    except Exception as e:
-        print(f"An error occurred while creating database tables: {e}")
-
-# --- END OF NEW FUNCTION ---
+# We no longer need Base and engine here because the startup event is removed.
 
 app = FastAPI(
     title="Aura Web Platform",
     description="The agentic core and user management services for the Aura platform.",
     version="1.0.0",
 )
-
-# --- NEW: RUN TABLE CREATION ON STARTUP ---
-@app.on_event("startup")
-def on_startup():
-    create_db_and_tables()
-# --- END OF NEW STARTUP EVENT ---
-
 
 origins = [
     "https://snowballannotation.com",
