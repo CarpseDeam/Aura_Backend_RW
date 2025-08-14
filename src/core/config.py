@@ -6,7 +6,8 @@ This module defines a `Settings` class that loads environment variables
 from a .env file, providing a centralized and validated source of
 configuration for the entire application.
 """
-
+import sys
+from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 
 
@@ -40,4 +41,10 @@ class Settings(BaseSettings):
 
 # Create a single, globally accessible instance of the settings.
 # Other modules can import this instance to access configuration values.
-settings = Settings()
+try:
+    settings = Settings()
+except ValidationError as e:
+    print("!!! AURA BACKEND: CRITICAL CONFIGURATION ERROR !!!", file=sys.stderr)
+    print("!!! One or more required environment variables are missing or invalid.", file=sys.stderr)
+    print("\n" + str(e), file=sys.stderr)
+    sys.exit(1) # Exit with a failure code to make the crash obvious.
