@@ -1,41 +1,39 @@
-# --- Stage 1: The "Builder" - Our Messy Workshop ---
-# We start with a full Python image to get all the build tools
-FROM python:3.11-slim as builder
+# Dockerfile for the llm-server microservice
 
-# Set the working directory inside the container
-WORKDIR /app
-
-# Install system dependencies that some Python packages might need
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy ONLY the requirements file first to leverage Docker's caching
-COPY requirements.txt .
-
-# Install all our dependencies, including the giant sentence-transformers.
-# This is where the big download happens.
-RUN pip wheel --no-cache-dir --wheel-dir /app/wheels -r requirements.txt
-
-
-# --- Stage 2: The "Runner" - Our Pristine Clean Room ---
-# We start with a fresh, tiny Python image
+# Use an official Python runtime as a parent image.
 FROM python:3.11-slim
 
-# Set the working directory
+# Set the working directory in the container to /app.
 WORKDIR /app
 
-# Copy the pre-compiled packages from our "builder" workshop,
-# leaving all the messy build caches and ML models behind.
-COPY --from=builder /app/wheels /wheels
-RUN pip install --no-cache /wheels/*
+# Set the PYTHONPATH environment variable.
+# This ensures that Python can find modules in the /app directory,
+# which is crucial for the `from src.providers` import.
+ENV PYTHONPATH=/app
 
-# Now, copy our actual application code into the clean room
-COPY . .
+# --- Build & Dependency Installation ---
 
-# Expose the port that our app will run on. Railway will use this.
-EXPOSE 8000
+# Copy the requirements file first. This leverages Docker's layer caching.
+# If requirements.txt doesn't change, this layer won't be rebuilt.
+COPY llm_server/requirements.txt .
 
-# The command to start our app. Note we no longer need the --port flag
-# because Railway will map its $PORT to the one we EXPOSE'd.
-CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Install the Python dependencies.
+RUN pip install --no-cache-dir -r requirements.txt
+
+# --- Application Code ---
+
+# Copy the microservice's main application file into the root of the WORKDIR.
+COPY llm_server/main.py .
+
+# Copy the shared 'providers' source code and its package initializer.
+COPY src/providers/ /app/src/providers/
+COPY src/__init__.py /app/src/__init__.py
+
+# --- Network & Execution ---
+
+# Expose port 8080 to allow communication with the service.
+EXPOSE 8080
+
+# Define the command to run the application using uvicorn.
+# It will run the 'app' instance from the 'main.py' file which is now in /app.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]

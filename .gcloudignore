@@ -1,0 +1,18 @@
+# .gcloudignore
+
+# Ignore everything by default.
+*
+
+# Whitelist the Dockerfile.
+!Dockerfile
+
+# Whitelist the llm_server and its contents.
+!llm_server
+!llm_server/**
+
+# Whitelist the src directory itself, then the providers directory and its contents,
+# and finally the __init__.py file.
+!src
+!src/__init__.py
+!src/providers
+!src/providers/**

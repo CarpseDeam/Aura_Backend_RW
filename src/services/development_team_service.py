@@ -2,8 +2,9 @@
 from __future__ import annotations
 import json
 import re
+import os
+import aiohttp
 from typing import TYPE_CHECKING, Dict, List, Optional, Any
-import google.generativeai as genai
 
 from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
@@ -21,7 +22,7 @@ class DevelopmentTeamService:
     """
     Orchestrates the main AI workflows by delegating to specialized services
     and handling different planning and execution modes.
-    Now with direct, multi-provider API calls.
+    This version now calls a dedicated, external LLM microservice.
     """
 
     def __init__(self, event_bus: EventBus, service_manager: "ServiceManager"):
@@ -33,37 +34,57 @@ class DevelopmentTeamService:
         self.vector_context_service = service_manager.vector_context_service
         self.foundry_manager = service_manager.get_foundry_manager()
         self.db = service_manager.db
+        self.llm_server_url = os.getenv("LLM_SERVER_URL") # Get the microservice URL from env vars
 
-        # Pre-load assignments for this user's request lifecycle
         assignments_from_db = crud.get_assignments_for_user(self.db, user_id=self.service_manager.user_id)
         self.llm_client.set_assignments({a.role_name: a.model_identifier for a in assignments_from_db})
 
-    async def _make_gemini_call(self, user_id: int, role: str, prompt: str, is_json: bool = False) -> str:
+    async def _make_llm_call(self, user_id: int, role: str, messages: List[Dict[str, Any]],
+                             is_json: bool = False) -> str:
         """
-        A centralized method for making calls to the Google Gemini API.
+        Makes a secure, asynchronous HTTP call to the dedicated LLM microservice.
         """
-        provider, model_name = self.llm_client.get_model_for_role(role)
-        if provider != "google":
-            return f"Error: Provider '{provider}' is not supported yet for role '{role}'."
+        if not self.llm_server_url:
+            return "Error: LLM_SERVER_URL is not configured. The main app cannot contact the AI microservice."
 
-        api_key = crud.get_decrypted_key_for_provider(self.db, user_id, provider_name="google")
+        provider_name, model_name = self.llm_client.get_model_for_role(role)
+        if not provider_name or not model_name:
+            return f"Error: No model assigned for role '{role}'."
+
+        api_key = crud.get_decrypted_key_for_provider(self.db, user_id, provider_name=provider_name)
         if not api_key:
-            return f"Error: No API key configured for Google."
+            return f"Error: No API key configured for provider '{provider_name}'."
 
-        genai.configure(api_key=api_key)
-
-        generation_config = {"temperature": self.llm_client.get_role_temperature(role)}
-        if is_json:
-            generation_config["response_mime_type"] = "application/json"
-
-        model = genai.GenerativeModel(model_name=model_name, generation_config=generation_config)
+        payload = {
+            "provider_name": provider_name,
+            "model_name": model_name,
+            "messages": messages,
+            "temperature": self.llm_client.get_role_temperature(role),
+            "is_json": is_json
+        }
+        headers = {
+            "Content-Type": "application/json",
+            "X-Provider-API-Key": api_key
+        }
 
         try:
-            response = await model.generate_content_async(prompt)
-            return response.text
+            async with aiohttp.ClientSession() as session:
+                invoke_url = f"{self.llm_server_url}/invoke"
+                async with session.post(invoke_url, json=payload, headers=headers, timeout=300) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data.get("reply", "Error: Invalid response from LLM service.")
+                    else:
+                        error_detail = await response.text()
+                        self.log("error", f"LLM service returned error {response.status}: {error_detail}")
+                        return f"Error: The AI microservice failed to process the request. Status: {response.status}. Details: {error_detail}"
+        except aiohttp.ClientError as e:
+            self.log("error", f"Could not connect to LLM service at {self.llm_server_url}. Error: {e}")
+            return f"Error: Could not connect to the AI microservice. Please ensure it is running and the URL is correct."
         except Exception as e:
-            self.log("error", f"Gemini API call failed: {e}")
-            return f"Error communicating with Google Gemini API: {e}"
+            self.log("error", f"An unexpected error occurred while calling the LLM service: {e}")
+            return f"An unexpected error occurred while calling the AI microservice: {e}"
+
 
     async def run_companion_chat(self, user_id: str, user_prompt: str, conversation_history: list) -> str:
         self.log("info", f"Companion chat initiated for user {user_id}")
@@ -71,7 +92,14 @@ class DevelopmentTeamService:
             conversation_history="\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history]),
             user_prompt=user_prompt
         )
-        return await self._make_gemini_call(int(user_id), "chat", prompt)
+        # For companion chat, we create a system prompt and then the user message
+        messages = [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+        # We merge the conversation history for context, but keep it clean
+        full_history = conversation_history + messages
+        return await self._make_llm_call(int(user_id), "chat", full_history)
 
     async def _post_chat_message(self, user_id: str, sender: str, message: str, is_error: bool = False):
         if message and message.strip():
@@ -99,7 +127,9 @@ class DevelopmentTeamService:
             conversation_history="\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history]),
             user_idea=user_idea
         )
-        response_str = await self._make_gemini_call(int(user_id), "planner", prompt, is_json=True)
+        messages = conversation_history + [{"role": "user", "content": prompt}]
+
+        response_str = await self._make_llm_call(int(user_id), "planner", messages, is_json=True)
 
         if response_str.startswith("Error:"):
             await self.handle_error(user_id, "Aura", response_str)
@@ -140,7 +170,8 @@ class DevelopmentTeamService:
             available_tools=available_tools, file_structure=file_structure,
             relevant_code_snippets=vector_context, JSON_OUTPUT_RULE=JSON_OUTPUT_RULE.strip()
         )
-        response_str = await self._make_gemini_call(int(user_id), "coder", prompt, is_json=True)
+        messages = [{"role": "user", "content": prompt}]
+        response_str = await self._make_llm_call(int(user_id), "coder", messages, is_json=True)
 
         if response_str.startswith("Error:"):
             self.log("error", f"Coder generation failure. Details: {response_str}")
@@ -166,7 +197,8 @@ class DevelopmentTeamService:
             user_goal=original_goal, mission_log=mission_log_str,
             failed_task=failed_task_str, error_message=error_message
         )
-        response_str = await self._make_gemini_call(int(user_id), "planner", prompt, is_json=True)
+        messages = [{"role": "user", "content": prompt}]
+        response_str = await self._make_llm_call(int(user_id), "planner", messages, is_json=True)
 
         if response_str.startswith("Error:"):
             await self.handle_error(user_id, "Aura", response_str)
@@ -189,7 +221,8 @@ class DevelopmentTeamService:
         if not task_descriptions:
             return "Mission accomplished!"
         prompt = AURA_MISSION_SUMMARY_PROMPT.format(completed_tasks=task_descriptions)
-        summary = await self._make_gemini_call(int(user_id), "chat", prompt)
+        messages = [{"role": "user", "content": prompt}]
+        summary = await self._make_llm_call(int(user_id), "chat", messages)
         return summary.strip() if summary.strip() else "Mission accomplished!"
 
     async def handle_error(self, user_id: str, agent: str, error_msg: str):

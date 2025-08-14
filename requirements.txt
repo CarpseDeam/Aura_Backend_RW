@@ -2,7 +2,7 @@
 fastapi
 uvicorn[standard]
 python-dotenv
-aiohttp
+aiohttp  # <-- NEW: For making requests to our LLM microservice
 
 # Database & Auth
 SQLAlchemy
@@ -10,10 +10,9 @@ psycopg2-binary
 passlib[bcrypt]
 python-jose[cryptography]
 
-# AI Core
-openai
-google-generativeai
-chromadb
-langchain-community
+# AI Core (slimmed down for main app)
+openai  # <-- Still needed for embeddings in VectorContextService
+chromadb # <-- Still needed for VectorContextService
 
+# Other FastAPI utilities
 python-multipart
