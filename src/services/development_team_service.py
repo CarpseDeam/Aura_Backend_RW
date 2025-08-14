@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from typing import TYPE_CHECKING, Dict, List, Optional, Any
-import asyncio
+import google.generativeai as genai
 
 from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
@@ -11,6 +11,7 @@ from src.prompts.creative import AURA_PLANNER_PROMPT, AURA_REPLANNER_PROMPT, AUR
 from src.prompts.coder import CODER_PROMPT
 from src.prompts.master_rules import JSON_OUTPUT_RULE, SENIOR_ARCHITECT_HEURISTIC_RULE
 from src.prompts.companion import COMPANION_PROMPT
+from src.db import crud
 
 if TYPE_CHECKING:
     from src.core.managers import ServiceManager
@@ -20,36 +21,54 @@ class DevelopmentTeamService:
     """
     Orchestrates the main AI workflows by delegating to specialized services
     and handling different planning and execution modes.
+    Now with direct, multi-provider API calls.
     """
 
     def __init__(self, event_bus: EventBus, service_manager: "ServiceManager"):
         self.event_bus = event_bus
         self.service_manager = service_manager
+        # llm_client is now used for role assignments, not for making calls
         self.llm_client = service_manager.get_llm_client()
         self.project_manager = service_manager.project_manager
         self.mission_log_service = service_manager.mission_log_service
         self.vector_context_service = service_manager.vector_context_service
         self.foundry_manager = service_manager.get_foundry_manager()
+        self.db = service_manager.db  # Get the db session
+
+    async def _make_gemini_call(self, user_id: int, role: str, prompt: str, is_json: bool = False) -> str:
+        """
+        A centralized method for making calls to the Google Gemini API.
+        """
+        provider, model_name = self.llm_client.get_model_for_role(role)
+        if provider != "google":
+            return f"Error: Provider '{provider}' is not supported yet for role '{role}'."
+
+        api_key = crud.get_decrypted_key_for_provider(self.db, user_id, provider_name="google")
+        if not api_key:
+            return f"Error: No API key configured for Google."
+
+        genai.configure(api_key=api_key)
+
+        generation_config = {"temperature": self.llm_client.get_role_temperature(role)}
+        if is_json:
+            generation_config["response_mime_type"] = "application/json"
+
+        model = genai.GenerativeModel(model_name=model_name, generation_config=generation_config)
+
+        try:
+            response = await model.generate_content_async(prompt)
+            return response.text
+        except Exception as e:
+            self.log("error", f"Gemini API call failed: {e}")
+            return f"Error communicating with Google Gemini API: {e}"
 
     async def run_companion_chat(self, user_id: str, user_prompt: str, conversation_history: list) -> str:
-        """
-        Uses a conversational prompt to chat with the user as a friendly companion.
-        """
         self.log("info", f"Companion chat initiated for user {user_id}")
-
         prompt = COMPANION_PROMPT.format(
             conversation_history="\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history]),
             user_prompt=user_prompt
         )
-
-        provider, model = self.llm_client.get_model_for_role("chat")
-        if not provider or not model:
-            return "Error: No 'chat' model is configured."
-
-        response_stream = self.llm_client.stream_chat(provider, model, prompt, "chat")
-        full_response = "".join([chunk async for chunk in response_stream])
-
-        return full_response.strip()
+        return await self._make_gemini_call(int(user_id), "chat", prompt)
 
     async def _post_chat_message(self, user_id: str, sender: str, message: str, is_error: bool = False):
         if message and message.strip():
@@ -62,25 +81,27 @@ class DevelopmentTeamService:
             await websocket_manager.broadcast_to_user(msg_data, user_id)
 
     def _parse_json_response(self, response: str) -> dict:
-        match = re.search(r'\{.*\}', response, re.DOTALL)
-        if not match:
-            raise ValueError(f"No JSON object found in the response. Raw response: {response}")
-        return json.loads(match.group(0))
+        # Gemini with JSON mode should return perfect JSON, so we can be simpler.
+        try:
+            return json.loads(response)
+        except json.JSONDecodeError:
+            match = re.search(r'\{.*\}', response, re.DOTALL)
+            if not match:
+                raise ValueError(f"No JSON object found in the response. Raw response: {response}")
+            return json.loads(match.group(0))
 
     async def run_aura_planner_workflow(self, user_id: str, user_idea: str, conversation_history: list):
         self.log("info", f"Aura planner workflow initiated for user {user_id}: '{user_idea[:50]}...'")
-        provider, model = self.llm_client.get_model_for_role("planner")
-        if not provider or not model:
-            await self.handle_error(user_id, "Aura", "No 'planner' model configured.")
-            return
-
         prompt = AURA_PLANNER_PROMPT.format(
             SENIOR_ARCHITECT_HEURISTIC_RULE=SENIOR_ARCHITECT_HEURISTIC_RULE.strip(),
             conversation_history="\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history]),
             user_idea=user_idea
         )
-        response_str = "".join(
-            [chunk async for chunk in self.llm_client.stream_chat(provider, model, prompt, "planner")])
+        response_str = await self._make_gemini_call(int(user_id), "planner", prompt, is_json=True)
+
+        if response_str.startswith("Error:"):
+            await self.handle_error(user_id, "Aura", response_str)
+            return
 
         try:
             plan_data = self._parse_json_response(response_str)
@@ -95,7 +116,8 @@ class DevelopmentTeamService:
             await self.handle_error(user_id, "Aura", f"Failed to create a valid plan: {e}.")
             self.log("error", f"Aura planner failure for user {user_id}. Raw response: {response_str}")
 
-    async def run_coding_task(self, task: Dict[str, any], last_error: Optional[str] = None) -> Optional[Dict[str, str]]:
+    async def run_coding_task(self, user_id: str, task: Dict[str, any], last_error: Optional[str] = None) -> Optional[
+        Dict[str, str]]:
         if task.get("tool_call"):
             self.log("info", f"Using pre-defined tool call for task: {task['description']}")
             return task["tool_call"]
@@ -116,11 +138,12 @@ class DevelopmentTeamService:
             available_tools=available_tools, file_structure=file_structure,
             relevant_code_snippets=vector_context, JSON_OUTPUT_RULE=JSON_OUTPUT_RULE.strip()
         )
-        provider, model = self.llm_client.get_model_for_role("coder")
-        if not provider or not model:
-            self.log("error", "No 'coder' model configured.")
+        response_str = await self._make_gemini_call(int(user_id), "coder", prompt, is_json=True)
+
+        if response_str.startswith("Error:"):
+            self.log("error", f"Coder generation failure. Details: {response_str}")
             return None
-        response_str = "".join([chunk async for chunk in self.llm_client.stream_chat(provider, model, prompt, "coder")])
+
         try:
             tool_call = self._parse_json_response(response_str)
             if "tool_name" not in tool_call or "arguments" not in tool_call:
@@ -141,12 +164,12 @@ class DevelopmentTeamService:
             user_goal=original_goal, mission_log=mission_log_str,
             failed_task=failed_task_str, error_message=error_message
         )
-        provider, model = self.llm_client.get_model_for_role("planner")
-        if not provider or not model:
-            await self.handle_error(user_id, "Aura", "No 'planner' model available for re-planning.")
+        response_str = await self._make_gemini_call(int(user_id), "planner", prompt, is_json=True)
+
+        if response_str.startswith("Error:"):
+            await self.handle_error(user_id, "Aura", response_str)
             return
-        response_str = "".join(
-            [chunk async for chunk in self.llm_client.stream_chat(provider, model, prompt, "planner")])
+
         try:
             new_plan_data = self._parse_json_response(response_str)
             new_plan_steps = new_plan_data.get("plan", [])
@@ -164,11 +187,7 @@ class DevelopmentTeamService:
         if not task_descriptions:
             return "Mission accomplished!"
         prompt = AURA_MISSION_SUMMARY_PROMPT.format(completed_tasks=task_descriptions)
-        provider, model = self.llm_client.get_model_for_role("chat")
-        if not provider or not model:
-            self.log("error", "No 'chat' model available for summary generation.")
-            return "Mission accomplished!"
-        summary = "".join([chunk async for chunk in self.llm_client.stream_chat(provider, model, prompt, "chat")])
+        summary = await self._make_gemini_call(int(user_id), "chat", prompt)
         return summary.strip() if summary.strip() else "Mission accomplished!"
 
     async def handle_error(self, user_id: str, agent: str, error_msg: str):

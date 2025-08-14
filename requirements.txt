@@ -10,8 +10,9 @@ psycopg2-binary
 passlib[bcrypt]
 python-jose[cryptography]
 
-# AI Core (OpenAI is all we need for this)
+# AI Core
 openai
+google-generativeai
 chromadb
 langchain-community
 

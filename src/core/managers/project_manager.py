@@ -7,7 +7,7 @@ from typing import Optional, Dict, List
 from .git_manager import GitManager
 from .venv_manager import VenvManager
 from .project_context import ProjectContext
-from src.event_bus import EventBus  # <-- THIS IS THE FIX!
+from src.event_bus import EventBus
 from src.events import ProjectCreated
 
 
@@ -152,12 +152,52 @@ class ProjectManager:
 
     def read_file(self, relative_path: str) -> Optional[str]:
         if not self.active_project_path: return None
-        full_path = self.active_project_path / relative_path
+        # Basic security check to prevent path traversal
+        full_path = (self.active_project_path / relative_path).resolve()
+        if self.active_project_path not in full_path.parents:
+            return None
         if not full_path.exists(): return None
         try:
             return full_path.read_text(encoding='utf-8')
         except Exception:
             return None
+
+    def get_file_tree(self) -> List[Dict]:
+        """
+        Recursively scans the active project path and builds a structured
+        list of files and directories for a tree view.
+        """
+        if not self.active_project_path:
+            return []
+
+        ignore_dirs = {'.git', '.venv', 'venv', '__pycache__', 'rag_db', 'node_modules'}
+
+        def build_tree(dir_path: Path) -> List[Dict]:
+            tree = []
+            # Sort items so directories come first, then files, all alphabetically
+            items = sorted(
+                list(dir_path.iterdir()),
+                key=lambda p: (p.is_file(), p.name.lower())
+            )
+            for item in items:
+                if item.name in ignore_dirs:
+                    continue
+                if item.is_dir():
+                    tree.append({
+                        "name": item.name,
+                        "type": "directory",
+                        "path": str(item.relative_to(self.active_project_path).as_posix()),
+                        "children": build_tree(item)
+                    })
+                else:
+                    tree.append({
+                        "name": item.name,
+                        "type": "file",
+                        "path": str(item.relative_to(self.active_project_path).as_posix())
+                    })
+            return tree
+
+        return build_tree(self.active_project_path)
 
     def save_and_commit_files(self, files: dict[str, str], commit_message: str):
         if self.git_manager:

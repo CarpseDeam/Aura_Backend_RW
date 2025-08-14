@@ -1,8 +1,9 @@
 from pathlib import Path
 from fastapi import Depends
+from sqlalchemy.orm import Session
 from src.event_bus import EventBus
 from src.core.managers import ProjectManager, ServiceManager
-
+from src.db.database import get_db
 from src.api.auth import get_current_user
 from src.db.models import User
 
@@ -10,7 +11,11 @@ from src.db.models import User
 # This is a good practice for more complex scenarios, but for now, it's a placeholder.
 _service_cache = {}
 
-def get_aura_services(current_user: User = Depends(get_current_user)) -> ServiceManager:
+
+def get_aura_services(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)  # <-- ADD THIS DEPENDENCY
+) -> ServiceManager:
     """
     Dependency that creates and yields a full, user-specific ServiceManager stack.
     FastAPI will run this for every request that needs it, providing a clean,
@@ -32,6 +37,11 @@ def get_aura_services(current_user: User = Depends(get_current_user)) -> Service
     # We will create a slimmed-down, non-GUI version for this.
     # For now, we'll assume the existing one can be used, but we may need to refactor it.
     services = ServiceManager(event_bus, project_root=Path("."))
+
+    # *** THE FIX IS HERE ***
+    # Pass the database session to the service manager so it can be used by sub-services
+    services.db = db
+
     services.initialize_core_components(Path("."), project_manager)
     services.initialize_services()
 

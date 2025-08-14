@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 import traceback
 import asyncio
+from sqlalchemy.orm import Session
 
 from src.event_bus import EventBus
 from src.core.llm_client import LLMClient
@@ -35,6 +36,7 @@ class ServiceManager:
         self.project_manager: ProjectManager = None
         self.execution_engine: ExecutionEngine = None
         self.foundry_manager: FoundryManager = None
+        self.db: Session = None # <-- ADD THIS ATTRIBUTE
 
         # Core Services
         self.app_state_service: AppStateService = None
@@ -127,79 +129,18 @@ class ServiceManager:
             project_manager=self.project_manager,
             mission_log_service=self.mission_log_service,
             vector_context_service=self.vector_context_service,
-            llm_client=self.llm_client  # This line was missing
+            llm_client=self.llm_client
         )
         self.log_to_event_bus("info", "ToolRunnerService has been configured.")
 
     async def launch_background_servers(self, timeout: int = 15):
-        python_executable_to_use: str
-        cwd_for_servers: Path
-        log_dir_for_servers: Path
-
-        self.log_to_event_bus("info", "Determining paths for launching background servers...")
-
-        server_script_base_dir = self.project_root / "servers"
-        python_executable_to_use = sys.executable
-        cwd_for_servers = self.project_root
-        log_dir_for_servers = self.project_root
-
-        llm_script_path = server_script_base_dir / "llm_server.py"
-        llm_subprocess_log_file = log_dir_for_servers / "llm_server_subprocess.log"
-
-        startupinfo = None
-        if sys.platform == "win32":
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
-
-        if self.llm_server_process is None or self.llm_server_process.poll() is not None:
-            self.log_to_event_bus("info", f"Attempting to launch LLM server from {llm_script_path}...")
-            try:
-                with open(llm_subprocess_log_file, "w", encoding="utf-8") as llm_log_handle:
-                    self.llm_server_process = subprocess.Popen(
-                        [python_executable_to_use, str(llm_script_path)], cwd=str(cwd_for_servers),
-                        stdout=llm_log_handle, stderr=subprocess.STDOUT, startupinfo=startupinfo
-                    )
-                self.log_to_event_bus("info", f"LLM Server process started with PID: {self.llm_server_process.pid}")
-            except Exception as e:
-                self.log_to_event_bus("error", f"Failed to launch LLM server: {e}\n{traceback.format_exc()}")
-
-        self.log_to_event_bus("info", "Waiting for LLM server to become available...")
-        start_time = asyncio.get_event_loop().time()
-        server_ready = False
-        while asyncio.get_event_loop().time() - start_time < timeout:
-            try:
-                models = await self.llm_client.get_available_models()
-                if models:
-                    self.log_to_event_bus("success",
-                                          f"LLM Server is online. Found models from providers: {list(models.keys())}")
-                    server_ready = True
-                    break
-            except Exception:
-                pass
-            await asyncio.sleep(1)
-
-        if not server_ready:
-            msg = f"LLM Server failed to start within {timeout} seconds. Check llm_server_subprocess.log for errors."
-            self.log_to_event_bus("error", msg)
-            raise RuntimeError(msg)
+        # This whole method can be disabled for the web server, as we won't launch local servers.
+        self.log_to_event_bus("info", "Skipping background server launch in web mode.")
+        return
 
     def terminate_background_servers(self):
-        self.log_to_event_bus("info", "[ServiceManager] Terminating background servers...")
-        servers = {"LLM": self.llm_server_process}
-        for name, process in servers.items():
-            if process and process.poll() is None:
-                self.log_to_event_bus("info", f"[ServiceManager] Terminating {name} server (PID: {process.pid})...")
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                    self.log_to_event_bus("info", f"[ServiceManager] {name} server terminated.")
-                except subprocess.TimeoutExpired:
-                    self.log_to_event_bus("warning",
-                                          f"[ServiceManager] {name} server did not terminate gracefully. Killing.")
-                    process.kill()
-
-        self.llm_server_process = None
+        self.log_to_event_bus("info", "Skipping background server termination in web mode.")
+        return
 
     async def shutdown(self):
         self.log_to_event_bus("info", "[ServiceManager] Shutting down services...")
