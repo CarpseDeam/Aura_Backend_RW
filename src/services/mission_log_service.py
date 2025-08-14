@@ -188,3 +188,49 @@ class MissionLogService:
     def get_initial_goal(self) -> str:
         """Returns the initial user goal that started the mission."""
         return self._initial_user_goal
+
+    async def update_task(self, user_id: str, task_id: int, description: str) -> bool:
+        """Updates the description of a specific task."""
+        if not description or not description.strip():
+            raise ValueError("Task description cannot be empty.")
+
+        for task in self.tasks:
+            if task.get('id') == task_id:
+                task['description'] = description
+                self._save_log_to_disk()
+                await self._notify_ui(user_id)
+                logger.info(f"Updated task {task_id} for user {user_id}.")
+                return True
+        logger.warning(f"Attempted to update non-existent task {task_id} for user {user_id}.")
+        return False
+
+    async def delete_task(self, user_id: str, task_id: int) -> bool:
+        """Deletes a specific task from the log."""
+        task_to_delete = next((task for task in self.tasks if task.get('id') == task_id), None)
+
+        if task_to_delete:
+            self.tasks.remove(task_to_delete)
+            self._save_log_to_disk()
+            await self._notify_ui(user_id)
+            logger.info(f"Deleted task {task_id} for user {user_id}.")
+            return True
+
+        logger.warning(f"Attempted to delete non-existent task {task_id} for user {user_id}.")
+        return False
+
+    async def reorder_tasks(self, user_id: str, ordered_task_ids: List[int]) -> bool:
+        """Reorders the entire task list based on a list of IDs."""
+        task_map = {task['id']: task for task in self.tasks}
+
+        # Check if all provided IDs are valid and match the current tasks
+        if len(ordered_task_ids) != len(self.tasks) or set(ordered_task_ids) != set(task_map.keys()):
+            logger.error(f"Task reorder request for user {user_id} has mismatched or invalid IDs.")
+            return False
+
+        new_task_list = [task_map[task_id] for task_id in ordered_task_ids if task_id in task_map]
+
+        self.tasks = new_task_list
+        self._save_log_to_disk()
+        await self._notify_ui(user_id)
+        logger.info(f"Reordered tasks for user {user_id}.")
+        return True

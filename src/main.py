@@ -7,6 +7,7 @@ from src.api.keys import router as keys_router
 from src.api.websockets import router as websocket_router
 from src.api.agent import router as agent_router
 from src.api.assignments import router as assignments_router
+from src.api.missions import router as missions_router
 from src.db.database import Base, engine # Import Base and engine
 
 # --- NEW FUNCTION TO CREATE DATABASE TABLES ---
@@ -37,6 +38,7 @@ origins = [
     "https://snowballannotation.com",
     "http://localhost",
     "http://localhost:8080",
+    "http://127.0.0.1:5500" # Added for local Live Server development
 ]
 
 app.add_middleware(
@@ -51,6 +53,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 app.include_router(keys_router, prefix="/api-keys", tags=["Provider Keys"])
 app.include_router(assignments_router, prefix="/api/assignments", tags=["Model Assignments"])
+app.include_router(missions_router, prefix="/api", tags=["Mission Control"])
 app.include_router(websocket_router, tags=["WebSockets"])
 app.include_router(agent_router, prefix="/agent", tags=["Aura Agent"])
 

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query, status
 from sqlalchemy.orm import Session
 from jose import JWTError, jwt
+import json
 
 from src.core.websockets import websocket_manager
 from src.db import models, crud
@@ -45,31 +46,50 @@ async def get_current_user_ws(
     return user
 
 
-@router.websocket("/ws/{client_id}")
+@router.websocket("/ws/command_deck")
 async def websocket_endpoint(
         websocket: WebSocket,
-        client_id: str,
         user: models.User = Depends(get_current_user_ws)
 ):
     """
     Handles WebSocket connections, now using a query-param-aware authenticator.
-    A unique client_id is expected for each connecting window.
+    The client_id is now hardcoded for our single-page app context.
     """
     if not user:
-        # The dependency will have already closed the connection if auth fails.
         return
 
     user_id = str(user.id)
+    client_id = "command_deck"  # Use a consistent ID for the main app
     await websocket_manager.connect(websocket, user_id, client_id)
 
     try:
+        # Send a connection confirmation message
+        await websocket_manager.send_to_client(
+            {"type": "internal_ws_status", "content": "connected"}, user_id, client_id
+        )
+
         while True:
-            data = await websocket.receive_text()
-            print(f"Received message from User '{user_id}', Client '{client_id}': {data}")
-            # For now, just echo the message back to demonstrate the connection.
-            await websocket_manager.send_to_client(
-                {"sender": "Aura", "message": f"Acknowledged: {data}"}, user_id, client_id
-            )
+            data_text = await websocket.receive_text()
+            try:
+                # Handle client-side ping to keep connection alive
+                data = json.loads(data_text)
+                if data.get("type") == "ping":
+                    continue  # Silently ignore pings and don't echo
+            except json.JSONDecodeError:
+                # Not a JSON message, just log it and ignore
+                print(f"Received non-JSON message from User '{user_id}': {data_text}")
+                continue
+
+            # In production, we don't need to echo messages back.
+            # The backend will proactively send updates. This can be removed later.
+            print(f"Received message from User '{user_id}', Client '{client_id}': {data_text}")
+            # await websocket_manager.send_to_client(
+            #     {"sender": "Aura", "message": f"Acknowledged: {data_text}"}, user_id, client_id
+            # )
 
     except WebSocketDisconnect:
+        websocket_manager.disconnect(user_id, client_id)
+        print(f"User '{user_id}' disconnected from WebSocket.")
+    except Exception as e:
+        print(f"An unexpected error occurred in WebSocket for user '{user_id}': {e}")
         websocket_manager.disconnect(user_id, client_id)
