@@ -10,7 +10,7 @@ from typing import Dict, List
 
 from src.core import security, config
 from src.db import models
-from src.schemas import user
+from src.schemas import user, model_assignment as schemas
 
 
 def get_user_by_email(db: Session, email: str) -> models.User | None:
@@ -83,23 +83,27 @@ def get_assignments_for_user(db: Session, user_id: int) -> List[models.ModelAssi
     return db.query(models.ModelAssignment).filter(models.ModelAssignment.user_id == user_id).all()
 
 
-def create_or_update_assignments_for_user(db: Session, user_id: int, assignments: Dict[str, str]):
+def create_or_update_assignments_for_user(db: Session, user_id: int, assignments: List[schemas.ModelAssignment]):
     """
     Atomically updates all model assignments for a user.
-    `assignments` is a dict of {"role_name": "provider/model_name"}.
+    `assignments` is now a list of Pydantic models.
     """
     existing_assignments = {a.role_name: a for a in get_assignments_for_user(db, user_id)}
 
-    for role_name, model_identifier in assignments.items():
+    for assignment_in in assignments:
+        role_name = assignment_in.role_name
         if role_name in existing_assignments:
             # Update existing assignment
-            existing_assignments[role_name].model_identifier = model_identifier
+            db_assignment = existing_assignments[role_name]
+            db_assignment.model_identifier = assignment_in.model_identifier
+            db_assignment.temperature = assignment_in.temperature
         else:
             # Create new assignment
             new_assignment = models.ModelAssignment(
                 user_id=user_id,
                 role_name=role_name,
-                model_identifier=model_identifier
+                model_identifier=assignment_in.model_identifier,
+                temperature=assignment_in.temperature
             )
             db.add(new_assignment)
     db.commit()

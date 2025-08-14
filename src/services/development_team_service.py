@@ -38,6 +38,7 @@ class DevelopmentTeamService:
 
         assignments_from_db = crud.get_assignments_for_user(self.db, user_id=self.service_manager.user_id)
         self.llm_client.set_assignments({a.role_name: a.model_identifier for a in assignments_from_db})
+        self.llm_client.set_temperatures({a.role_name: a.temperature for a in assignments_from_db})
 
     async def _make_llm_call(self, user_id: int, role: str, messages: List[Dict[str, Any]],
                              is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> str:

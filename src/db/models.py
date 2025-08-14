@@ -6,7 +6,7 @@ This module contains the class definitions that map to database tables.
 Each class represents a table, and its attributes represent the columns.
 """
 
-from sqlalchemy import Column, Integer, String, LargeBinary, ForeignKey, UniqueConstraint
+from sqlalchemy import Column, Integer, String, LargeBinary, ForeignKey, UniqueConstraint, Float
 from sqlalchemy.orm import relationship
 from .database import Base
 
@@ -50,6 +50,7 @@ class ModelAssignment(Base):
     id: int = Column(Integer, primary_key=True, index=True)
     role_name: str = Column(String, index=True, nullable=False)
     model_identifier: str = Column(String, nullable=False)  # e.g., "openai/gpt-5"
+    temperature: float = Column(Float, nullable=False, server_default='0.7') # <-- NEW
     user_id: int = Column(Integer, ForeignKey("users.id"), nullable=False)
 
     owner = relationship("User", back_populates="assignments")
