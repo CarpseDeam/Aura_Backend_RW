@@ -3,6 +3,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict
 
+# --- NEW IMPORTS ---
+from src.db.database import engine
+from src.db.models import Base  # Import the Base from your models
+
 from src.api.auth import router as auth_router
 from src.api.keys import router as keys_router
 from src.api.websockets import router as websocket_router
@@ -10,15 +14,19 @@ from src.api.agent import router as agent_router
 from src.api.assignments import router as assignments_router
 from src.api.missions import router as missions_router
 
+# --- NEW: CREATE DATABASE TABLES ON STARTUP ---
+# This command tells SQLAlchemy to create all the tables defined in your models
+# if they don't already exist in the database.
+Base.metadata.create_all(bind=engine)
+
+
 app = FastAPI(
     title="Aura Web Platform",
     description="The agentic core and user management services for the Aura platform.",
     version="1.0.0",
 )
 
-# --- THIS IS THE PERMANENT SECURITY FIX ---
-# We are now using the specific, secure list of your domains.
-# The dangerous "*" has been removed.
+# This is the secure, correct CORS configuration.
 origins = [
     "https://snowballannotation.com",
     "https://www.snowballannotation.com",
