@@ -15,7 +15,6 @@ from src.core.config import settings
 
 SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
 
-# --- THIS IS THE FIX ---
 # The `connect_args` parameter is ONLY for SQLite and will cause a crash with PostgreSQL.
 # It has been removed.
 engine = create_engine(SQLALCHEMY_DATABASE_URL)

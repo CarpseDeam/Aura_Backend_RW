@@ -3,7 +3,7 @@ fastapi
 uvicorn[standard]
 python-dotenv
 aiohttp
-pydantic-settings  # <-- FIX #1: This is the most likely cause of the 502 crash.
+pydantic-settings
 
 # Database & Auth
 SQLAlchemy
