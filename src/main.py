@@ -9,8 +9,7 @@ try:
     from fastapi.middleware.cors import CORSMiddleware
     from typing import Dict
 
-    # This chain of imports is what is crashing. One of these files
-    # is triggering a fatal error, most likely when src.core.config runs.
+    # This chain of imports is where the crash is happening.
     from src.api.auth import router as auth_router
     from src.api.keys import router as keys_router
     from src.api.websockets import router as websocket_router
@@ -29,8 +28,6 @@ except Exception as e:
     print("--------------------- FULL TRACEBACK ---------------------", file=sys.stderr)
     traceback.print_exc(file=sys.stderr)
     print("----------------------------------------------------------", file=sys.stderr)
-    print("This is likely a missing environment variable.", file=sys.stderr)
-    print("Please verify DATABASE_URL, JWT_SECRET_KEY, and ENCRYPTION_KEY in Railway.", file=sys.stderr)
     # Exit with an error code to make sure the process stops.
     sys.exit(1)
 # --- END OF RECORDER ---
