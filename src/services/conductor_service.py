@@ -31,13 +31,11 @@ class ConductorService:
         self.mission_log_service = mission_log_service
         self.tool_runner_service = tool_runner_service
         self.development_team_service = development_team_service
-        self.is_mission_active = False # This should be managed per-user
+        self.is_mission_active = False
         self.original_user_goal = ""
         logger.info("ConductorService initialized.")
 
     async def execute_mission_in_background(self, user_id: str):
-        # We might need a more robust way to prevent concurrent missions for the same user
-        # For now, this acts as a simple entry point.
         self.is_mission_active = True
         self.original_user_goal = self.mission_log_service.get_initial_goal()
         await self.execute_mission(user_id)
@@ -50,7 +48,6 @@ class ConductorService:
             await self._post_chat_message(user_id, "Conductor", "Mission dispatched. Beginning autonomous execution.")
 
             while True:
-                # In a real multi-user system, you'd check a user-specific "is_active" flag
                 if not self.is_mission_active:
                     self.log("info", f"Mission for user {user_id} was stopped.")
                     break
@@ -67,6 +64,7 @@ class ConductorService:
                 while retry_count <= self.MAX_RETRIES_PER_TASK:
                     self.log("info", f"Executing task {current_task['id']} for user {user_id}: {current_task['description']}")
                     tool_call = await self.development_team_service.run_coding_task(
+                        user_id=user_id,
                         task=current_task,
                         last_error=current_task.get('last_error')
                     )
@@ -101,12 +99,12 @@ class ConductorService:
         except Exception as e:
             logger.error(f"Critical error during mission for user {user_id}: {e}", exc_info=True)
             await self._post_chat_message(user_id, "Aura", f"A critical error stopped the mission: {e}", is_error=True)
+            await websocket_manager.broadcast_to_user({"type": "mission_failure", "content": str(e)}, user_id)
         finally:
-            self.is_mission_active = False # Reset user-specific flag
+            self.is_mission_active = False
             self.log("info", f"Conductor finished cycle for user {user_id}.")
 
     def _is_result_an_error(self, result: any) -> (bool, Optional[str]):
-        """Determines if a tool result constitutes an error."""
         if isinstance(result, str) and result.strip().lower().startswith("error"):
             return True, result
         if isinstance(result, dict) and result.get('status', 'success').lower() in ["failure", "error"]:
@@ -123,7 +121,6 @@ class ConductorService:
         )
 
     async def _handle_mission_completion(self, user_id: str):
-        """Generates and posts the final summary when all tasks are done."""
         self.log("success", f"Mission Accomplished for user {user_id}!")
         summary = await self.development_team_service.generate_mission_summary(user_id, self.mission_log_service.get_tasks())
         await self._post_chat_message(user_id, "Aura", summary)

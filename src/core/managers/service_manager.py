@@ -26,7 +26,6 @@ if TYPE_CHECKING:
 class ServiceManager:
     """
     Manages all application services and their dependencies.
-    Single responsibility: Service lifecycle and dependency injection.
     """
 
     def __init__(self, event_bus: EventBus, project_root: Path):
@@ -36,7 +35,8 @@ class ServiceManager:
         self.project_manager: ProjectManager = None
         self.execution_engine: ExecutionEngine = None
         self.foundry_manager: FoundryManager = None
-        self.db: Session = None # <-- ADD THIS ATTRIBUTE
+        self.db: Session = None
+        self.user_id: int = None
 
         # Core Services
         self.app_state_service: AppStateService = None
@@ -55,27 +55,20 @@ class ServiceManager:
     def _on_project_activated(self, event: ProjectCreated):
         """
         Initializes or re-initializes services that depend on an active project.
-        This is the central point for ensuring all services are synced after a
-        project change.
         """
         self.log_to_event_bus("info",
                               f"Project activated: {event.project_name}. Synchronizing project-specific services.")
         project_path = Path(event.project_path)
 
-        # 1. Create a new Mission Log service for the new project context.
         self.mission_log_service = MissionLogService(self.project_manager, self.event_bus)
         self.mission_log_service.load_log_for_active_project()
 
-        # 2. Create the RAG database service for the new project context.
         rag_db_path = project_path / ".rag_db"
-        self.vector_context_service = VectorContextService(db_path=str(rag_db_path))
+        self.vector_context_service = VectorContextService(db_path=str(rag_db_path), user_db_session=self.db,
+                                                           user_id=self.user_id)
 
-        # 3. Create a new Tool Runner with the new services.
         self._initialize_tool_runner()
 
-        # 4. *** THE FIX IS HERE: ***
-        # Ensure all major services are updated with the NEW instances of the services
-        # they depend on, guaranteeing everyone is using the same objects.
         if self.conductor_service:
             self.conductor_service.tool_runner_service = self.tool_runner_service
             self.conductor_service.mission_log_service = self.mission_log_service
@@ -93,7 +86,7 @@ class ServiceManager:
 
     def initialize_core_components(self, project_root: Path, project_manager: ProjectManager):
         self.log_to_event_bus("info", "[ServiceManager] Initializing core components...")
-        self.llm_client = LLMClient(project_root)
+        self.llm_client = LLMClient()
         self.project_manager = project_manager
         self.execution_engine = ExecutionEngine(self.project_manager)
         self.foundry_manager = FoundryManager()
@@ -105,12 +98,10 @@ class ServiceManager:
 
         self.app_state_service = AppStateService(self.event_bus)
 
-        # Services that get re-created when a project is activated
         self.mission_log_service = MissionLogService(self.project_manager, self.event_bus)
-        self.vector_context_service = None  # Will be created on project activation
+        self.vector_context_service = None
         self._initialize_tool_runner()
 
-        # Services that persist
         self.development_team_service = DevelopmentTeamService(self.event_bus, self)
         self.conductor_service = ConductorService(
             self.event_bus,
@@ -134,7 +125,6 @@ class ServiceManager:
         self.log_to_event_bus("info", "ToolRunnerService has been configured.")
 
     async def launch_background_servers(self, timeout: int = 15):
-        # This whole method can be disabled for the web server, as we won't launch local servers.
         self.log_to_event_bus("info", "Skipping background server launch in web mode.")
         return
 

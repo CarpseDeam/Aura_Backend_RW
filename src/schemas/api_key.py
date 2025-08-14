@@ -23,3 +23,7 @@ class ProviderKey(ProviderKeyBase):
 class ProviderKeyList(BaseModel):
     """Schema for returning a list of configured keys."""
     keys: List[ProviderKey]
+
+    class Config:
+        """Pydantic configuration options."""
+        from_attributes = True

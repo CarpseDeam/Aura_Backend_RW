@@ -27,13 +27,16 @@ class DevelopmentTeamService:
     def __init__(self, event_bus: EventBus, service_manager: "ServiceManager"):
         self.event_bus = event_bus
         self.service_manager = service_manager
-        # llm_client is now used for role assignments, not for making calls
         self.llm_client = service_manager.get_llm_client()
         self.project_manager = service_manager.project_manager
         self.mission_log_service = service_manager.mission_log_service
         self.vector_context_service = service_manager.vector_context_service
         self.foundry_manager = service_manager.get_foundry_manager()
-        self.db = service_manager.db  # Get the db session
+        self.db = service_manager.db
+
+        # Pre-load assignments for this user's request lifecycle
+        assignments_from_db = crud.get_assignments_for_user(self.db, user_id=self.service_manager.user_id)
+        self.llm_client.set_assignments({a.role_name: a.model_identifier for a in assignments_from_db})
 
     async def _make_gemini_call(self, user_id: int, role: str, prompt: str, is_json: bool = False) -> str:
         """
@@ -81,7 +84,6 @@ class DevelopmentTeamService:
             await websocket_manager.broadcast_to_user(msg_data, user_id)
 
     def _parse_json_response(self, response: str) -> dict:
-        # Gemini with JSON mode should return perfect JSON, so we can be simpler.
         try:
             return json.loads(response)
         except json.JSONDecodeError:
