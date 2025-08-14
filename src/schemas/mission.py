@@ -1,5 +1,5 @@
 # src/schemas/mission.py
-"""Pydantic schemas for Mission Log (Agent TODO) interactions."""
+"""Pydantic schemas for mission task interactions."""
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
 
