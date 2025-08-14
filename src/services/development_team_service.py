@@ -34,13 +34,13 @@ class DevelopmentTeamService:
         self.vector_context_service = service_manager.vector_context_service
         self.foundry_manager = service_manager.get_foundry_manager()
         self.db = service_manager.db
-        self.llm_server_url = os.getenv("LLM_SERVER_URL") # Get the microservice URL from env vars
+        self.llm_server_url = os.getenv("LLM_SERVER_URL")  # Get the microservice URL from env vars
 
         assignments_from_db = crud.get_assignments_for_user(self.db, user_id=self.service_manager.user_id)
         self.llm_client.set_assignments({a.role_name: a.model_identifier for a in assignments_from_db})
 
     async def _make_llm_call(self, user_id: int, role: str, messages: List[Dict[str, Any]],
-                             is_json: bool = False) -> str:
+                             is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> str:
         """
         Makes a secure, asynchronous HTTP call to the dedicated LLM microservice.
         """
@@ -60,7 +60,8 @@ class DevelopmentTeamService:
             "model_name": model_name,
             "messages": messages,
             "temperature": self.llm_client.get_role_temperature(role),
-            "is_json": is_json
+            "is_json": is_json,
+            "tools": tools,
         }
         headers = {
             "Content-Type": "application/json",
@@ -84,7 +85,6 @@ class DevelopmentTeamService:
         except Exception as e:
             self.log("error", f"An unexpected error occurred while calling the LLM service: {e}")
             return f"An unexpected error occurred while calling the AI microservice: {e}"
-
 
     async def run_companion_chat(self, user_id: str, user_prompt: str, conversation_history: list) -> str:
         self.log("info", f"Companion chat initiated for user {user_id}")
@@ -164,14 +164,18 @@ class DevelopmentTeamService:
         vector_context = "No existing code snippets were found."
         file_structure = "\n".join(
             sorted(self.project_manager.get_project_files().keys())) or "The project is currently empty."
-        available_tools = json.dumps(self.foundry_manager.get_llm_tool_definitions(), indent=2)
+
+        available_tools = self.foundry_manager.get_llm_tool_definitions()
+
         prompt = CODER_PROMPT.format(
             current_task=current_task_description, mission_log=mission_log_history,
-            available_tools=available_tools, file_structure=file_structure,
+            available_tools=json.dumps(available_tools, indent=2),
+            file_structure=file_structure,
             relevant_code_snippets=vector_context, JSON_OUTPUT_RULE=JSON_OUTPUT_RULE.strip()
         )
         messages = [{"role": "user", "content": prompt}]
-        response_str = await self._make_llm_call(int(user_id), "coder", messages, is_json=True)
+
+        response_str = await self._make_llm_call(int(user_id), "coder", messages, is_json=True, tools=available_tools)
 
         if response_str.startswith("Error:"):
             self.log("error", f"Coder generation failure. Details: {response_str}")
