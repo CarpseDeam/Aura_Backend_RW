@@ -7,7 +7,7 @@ from a .env file, providing a centralized and validated source of
 configuration for the entire application.
 """
 
-from pydantic_settings import BaseSettings # <-- THIS IS THE FIX
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
