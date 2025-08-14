@@ -36,9 +36,11 @@ def on_startup():
 
 origins = [
     "https://snowballannotation.com",
+    "https://www.snowballannotation.com",
+    # REMOVED the incorrect llannotation domains
     "http://localhost",
     "http://localhost:8080",
-    "http://127.0.0.1:5500" # Added for local Live Server development
+    "http://127.0.0.1:5500"
 ]
 
 app.add_middleware(
