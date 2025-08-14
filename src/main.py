@@ -16,10 +16,16 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# --- THIS IS THE CRITICAL FIX ---
-# We are temporarily allowing all origins to confirm that CORS is the issue.
-# The wildcard "*" tells the browser that any domain is allowed to make requests.
-origins = ["*"]
+# --- THIS IS THE PERMANENT SECURITY FIX ---
+# We are now using the specific, secure list of your domains.
+# The dangerous "*" has been removed.
+origins = [
+    "https://snowballannotation.com",
+    "https://www.snowballannotation.com",
+    "http://localhost",
+    "http://localhost:8080",
+    "http://127.0.0.1:5500"
+]
 
 app.add_middleware(
     CORSMiddleware,

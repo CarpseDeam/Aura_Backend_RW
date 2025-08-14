@@ -22,6 +22,7 @@ async def register(user_in: user.UserCreate, db: Session = Depends(get_db)) -> m
     Handles user registration.
 
     Creates a new user in the database if the email is not already in use.
+    It now requires a valid beta key.
 
     Args:
         user_in: The user data for registration from the request body.
@@ -31,8 +32,15 @@ async def register(user_in: user.UserCreate, db: Session = Depends(get_db)) -> m
         The newly created user's data.
 
     Raises:
-        HTTPException: If a user with the same email already exists.
+        HTTPException: If the beta key is invalid or the email already exists.
     """
+    # --- NEW: Beta Key Validation ---
+    if user_in.beta_key != config.settings.BETA_ACCESS_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid Beta Key",
+        )
+
     db_user = crud.get_user_by_email(db, email=user_in.email)
     if db_user:
         raise HTTPException(

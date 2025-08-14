@@ -9,6 +9,7 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     """Schema for creating a new user."""
     password: str
+    beta_key: str  # <-- NEW: Add the beta key field
 
 class UserLogin(BaseModel):
     """Schema for user login."""

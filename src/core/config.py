@@ -22,12 +22,14 @@ class Settings(BaseSettings):
         DATABASE_URL (str): The connection string for the primary database.
         JWT_SECRET_KEY (str): The secret key for signing and verifying JSON Web Tokens.
         ENCRYPTION_KEY (str): A secret key for symmetric encryption/decryption of data.
+        BETA_ACCESS_KEY (str): A secret key required for new user registration.
         ALGORITHM (str): The algorithm to use for JWT encoding (e.g., "HS256").
         ACCESS_TOKEN_EXPIRE_MINUTES (int): The lifetime of an access token in minutes.
     """
     DATABASE_URL: str
     JWT_SECRET_KEY: str
     ENCRYPTION_KEY: str
+    BETA_ACCESS_KEY: str  # <-- NEW: The required beta key
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
