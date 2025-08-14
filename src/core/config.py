@@ -32,8 +32,9 @@ class Settings(BaseSettings):
 
     class Config:
         """Pydantic configuration options for the Settings class."""
-        # The env_file directive is removed to rely solely on environment variables
-        # in production, which is the standard for platforms like Railway.
+        # The env_file directive is removed. This forces the app to rely ONLY
+        # on environment variables in production, which is how Railway works.
+        # This is the fix for the silent startup crash.
         env_file_encoding = "utf-8"
 
 
