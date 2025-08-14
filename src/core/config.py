@@ -32,7 +32,8 @@ class Settings(BaseSettings):
 
     class Config:
         """Pydantic configuration options for the Settings class."""
-        env_file = ".env"
+        # The env_file directive is removed to rely solely on environment variables
+        # in production, which is the standard for platforms like Railway.
         env_file_encoding = "utf-8"
 
 
