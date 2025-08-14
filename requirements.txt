@@ -1,19 +1,12 @@
-# Web Server & Async
 fastapi
 uvicorn[standard]
 python-dotenv
 aiohttp
 pydantic-settings
-
-# Database & Auth
 SQLAlchemy
 psycopg2-binary
 passlib[bcrypt]
 python-jose[cryptography]
-
-# AI Core (slimmed down for main app)
 openai
 chromadb
-
-# Other FastAPI utilities
 python-multipart
