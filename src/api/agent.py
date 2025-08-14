@@ -1,6 +1,7 @@
 # src/api/agent.py
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, status
 from pydantic import BaseModel
+from typing import List, Dict, Any
 
 from src.dependencies import get_aura_services
 from src.core.managers import ServiceManager, ProjectManager
@@ -18,6 +19,30 @@ class GenerateRequest(BaseModel):
 
 class DispatchRequest(BaseModel):
     project_name: str
+
+
+class ChatRequest(BaseModel):
+    prompt: str
+    history: List[Dict[str, Any]]
+
+
+@router.post("/chat")
+async def agent_chat(
+        request: ChatRequest,
+        current_user: User = Depends(get_current_user),
+        aura_services: ServiceManager = Depends(get_aura_services)
+):
+    """
+    Handles conversational, non-planning chat with Aura's companion persona.
+    """
+    dev_team: DevelopmentTeamService = aura_services.get_development_team_service()
+
+    response_text = await dev_team.run_companion_chat(
+        user_id=str(current_user.id),
+        user_prompt=request.prompt,
+        conversation_history=request.history
+    )
+    return {"reply": response_text}
 
 
 @router.post("/generate", status_code=status.HTTP_202_ACCEPTED)
@@ -72,22 +97,15 @@ async def dispatch_agent_mission(
     """
     conductor: ConductorService = aura_services.conductor_service
     project_manager: ProjectManager = aura_services.get_project_manager()
-
-    # Ensure the project exists and load its context (especially the mission log)
     project_path = project_manager.load_project(request.project_name)
     if not project_path:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Project '{request.project_name}' not found for this user."
         )
-
-    # The mission log is loaded when the service manager is initialized,
-    # specifically when the ProjectManager loads the project.
-
     user_id = str(current_user.id)
     background_tasks.add_task(
         conductor.execute_mission_in_background,
         user_id=user_id
     )
-
     return {"message": "Dispatch acknowledged. Aura is now executing the mission plan."}
