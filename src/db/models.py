@@ -14,14 +14,6 @@ from .database import Base
 class User(Base):
     """
     Represents a user in the 'users' table.
-
-    This model stores user authentication and configuration details.
-
-    Attributes:
-        id (int): The primary key for the user, auto-incrementing.
-        email (str): The user's unique email address, used for login.
-        hashed_password (str): The user's password, hashed for security.
-        keys (relationship): A one-to-many relationship to the user's provider API keys.
     """
     __tablename__ = "users"
 
@@ -30,18 +22,12 @@ class User(Base):
     hashed_password: str = Column(String, nullable=False)
 
     keys = relationship("ProviderKey", back_populates="owner", cascade="all, delete-orphan")
+    assignments = relationship("ModelAssignment", back_populates="owner", cascade="all, delete-orphan")
 
 
 class ProviderKey(Base):
     """
     Represents an encrypted API key for a specific provider, linked to a user.
-
-    Attributes:
-        id (int): The primary key for the key entry.
-        provider_name (str): The name of the API provider (e.g., "openai", "anthropic").
-        encrypted_key (bytes): The user's API key, encrypted before being stored.
-        user_id (int): Foreign key linking to the user who owns this key.
-        owner (relationship): The back-reference to the User object.
     """
     __tablename__ = "provider_keys"
 
@@ -53,3 +39,19 @@ class ProviderKey(Base):
     owner = relationship("User", back_populates="keys")
 
     __table_args__ = (UniqueConstraint('user_id', 'provider_name', name='_user_provider_uc'),)
+
+
+class ModelAssignment(Base):
+    """
+    Represents a user's choice of a specific model for a specific role.
+    """
+    __tablename__ = "model_assignments"
+
+    id: int = Column(Integer, primary_key=True, index=True)
+    role_name: str = Column(String, index=True, nullable=False)
+    model_identifier: str = Column(String, nullable=False)  # e.g., "openai/gpt-5"
+    user_id: int = Column(Integer, ForeignKey("users.id"), nullable=False)
+
+    owner = relationship("User", back_populates="assignments")
+
+    __table_args__ = (UniqueConstraint('user_id', 'role_name', name='_user_role_uc'),)

@@ -6,6 +6,7 @@ from src.api.auth import router as auth_router
 from src.api.keys import router as keys_router
 from src.api.websockets import router as websocket_router
 from src.api.agent import router as agent_router
+from src.api.assignments import router as assignments_router # Import the new router
 
 app = FastAPI(
     title="Aura Web Platform",
@@ -13,36 +14,29 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# --- THIS IS THE FIX ---
-# Define the list of "origins" (our VIP list) that are allowed to talk to our backend.
 origins = [
-    "https://snowballannotation.com", # Your production frontend
-    "http://localhost",              # For local development later
-    "http://localhost:8080",         # A common local dev port
+    "https://snowballannotation.com",
+    "http://localhost",
+    "http://localhost:8080",
 ]
 
-# Add the CORSMiddleware to the application
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,           # Allow origins from our VIP list
-    allow_credentials=True,          # Allow cookies (important for auth)
-    allow_methods=["*"],             # Allow all methods (GET, POST, etc.)
-    allow_headers=["*"],             # Allow all headers
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
-# --- END OF FIX ---
 
-
-# Include the routers from the api modules with appropriate prefixes and tags
+# Include routers with prefixes and tags
 app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
-app.include_router(keys_router, prefix="/api-keys", tags=["API Keys"])
+app.include_router(keys_router, prefix="/api-keys", tags=["Provider Keys"])
+app.include_router(assignments_router, prefix="/api/assignments", tags=["Model Assignments"]) # Add the new router
 app.include_router(websocket_router, tags=["WebSockets"])
 app.include_router(agent_router, prefix="/agent", tags=["Aura Agent"])
 
 
 @app.get("/", response_model=Dict[str, str], tags=["Root"])
 async def read_root() -> Dict[str, str]:
-    """
-    Root GET endpoint.
-    Provides a simple welcome message to verify that the service is running.
-    """
+    """Root GET endpoint."""
     return {"message": "Welcome to the Aura API Command Center"}
