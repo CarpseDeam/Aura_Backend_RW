@@ -3,11 +3,11 @@ import logging
 import asyncio
 from typing import Dict, Optional
 
+from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
 from .mission_log_service import MissionLogService
 from .tool_runner_service import ToolRunnerService
 from .development_team_service import DevelopmentTeamService
-from src.events import PostChatMessage, MissionAccomplished
 
 logger = logging.getLogger(__name__)
 
@@ -31,37 +31,33 @@ class ConductorService:
         self.mission_log_service = mission_log_service
         self.tool_runner_service = tool_runner_service
         self.development_team_service = development_team_service
-        self.is_mission_active = False
+        self.is_mission_active = False # This should be managed per-user
         self.original_user_goal = ""
         logger.info("ConductorService initialized.")
 
-    def execute_mission_in_background(self, event=None):
-        if self.is_mission_active:
-            self.log("warning", "Mission is already in progress.")
-            return
+    async def execute_mission_in_background(self, user_id: str):
+        # We might need a more robust way to prevent concurrent missions for the same user
+        # For now, this acts as a simple entry point.
         self.is_mission_active = True
-        if not self.original_user_goal:
-            self.original_user_goal = self.mission_log_service.get_initial_goal()
+        self.original_user_goal = self.mission_log_service.get_initial_goal()
+        await self.execute_mission(user_id)
 
-        asyncio.create_task(self.execute_mission())
-
-    async def execute_mission(self):
+    async def execute_mission(self, user_id: str):
         """
-        The main agentic loop. It processes tasks, retries on failure, and
-        triggers a strategic re-plan if a task cannot be completed.
+        The main agentic loop for a specific user.
         """
         try:
-            self.event_bus.emit("agent_status_changed", "Conductor", "Mission dispatched...", "fa5s.play-circle")
-            self._post_chat_message("Conductor", "Mission received. Beginning autonomous execution loop.")
+            await self._post_chat_message(user_id, "Conductor", "Mission dispatched. Beginning autonomous execution.")
 
             while True:
+                # In a real multi-user system, you'd check a user-specific "is_active" flag
                 if not self.is_mission_active:
-                    self.log("info", "Mission execution was externally stopped.")
+                    self.log("info", f"Mission for user {user_id} was stopped.")
                     break
 
                 pending_tasks = self.mission_log_service.get_tasks(done=False)
                 if not pending_tasks:
-                    await self._handle_mission_completion()
+                    await self._handle_mission_completion(user_id)
                     break
 
                 current_task = pending_tasks[0]
@@ -69,7 +65,7 @@ class ConductorService:
                 task_succeeded = False
 
                 while retry_count <= self.MAX_RETRIES_PER_TASK:
-                    self.log("info", f"Executing task {current_task['id']}: {current_task['description']}")
+                    self.log("info", f"Executing task {current_task['id']} for user {user_id}: {current_task['description']}")
                     tool_call = await self.development_team_service.run_coding_task(
                         task=current_task,
                         last_error=current_task.get('last_error')
@@ -79,38 +75,35 @@ class ConductorService:
                         error_msg = f"Could not determine a tool call for task: '{current_task['description']}'"
                         current_task['last_error'] = error_msg
                         retry_count += 1
-                        self.log("warning", f"{error_msg}. Retry {retry_count}/{self.MAX_RETRIES_PER_TASK}.")
                         continue
 
                     result = await self.tool_runner_service.run_tool_by_dict(tool_call)
                     result_is_error, error_message = self._is_result_an_error(result)
 
                     if not result_is_error:
-                        self.mission_log_service.mark_task_as_done(current_task['id'])
-                        self._post_chat_message("Conductor", f"Task completed: {current_task['description']}")
+                        await self.mission_log_service.mark_task_as_done(user_id, current_task['id'])
+                        await self._post_chat_message(user_id, "Conductor", f"Task completed: {current_task['description']}")
                         task_succeeded = True
                         break
                     else:
                         current_task['last_error'] = error_message
                         retry_count += 1
-                        self.log("warning", f"Task {current_task['id']} failed. Error: {error_message}. Retry {retry_count}/{self.MAX_RETRIES_PER_TASK}.")
-                        self._post_chat_message("Conductor", f"Task failed. I will try again. Error: {error_message}", is_error=True)
+                        self.log("warning", f"Task {current_task['id']} failed for user {user_id}. Error: {error_message}.")
+                        await self._post_chat_message(user_id, "Conductor", f"Task failed, retrying. Error: {error_message}", is_error=True)
 
                 if not task_succeeded:
-                    self.log("error", f"Task {current_task['id']} failed after {self.MAX_RETRIES_PER_TASK + 1} attempts. Triggering strategic re-plan.")
-                    self._post_chat_message("Aura", "I seem to be stuck. I'm going to rethink my approach.", is_error=True)
-                    await self._execute_strategic_replan(current_task)
-                    # The loop will continue with the new plan on the next iteration
+                    self.log("error", f"Task {current_task['id']} failed for user {user_id} after retries. Re-planning.")
+                    await self._post_chat_message(user_id, "Aura", "I'm stuck. Rethinking my approach.", is_error=True)
+                    await self._execute_strategic_replan(user_id, current_task)
                 else:
-                    await asyncio.sleep(0.5) # Small delay between successful tasks
+                    await asyncio.sleep(0.5)
 
         except Exception as e:
-            logger.error(f"A critical error occurred during mission execution: {e}", exc_info=True)
-            self.event_bus.emit("agent_status_changed", "Conductor", f"Mission Failed: {e}", "fa5s.exclamation-circle")
-            self._post_chat_message("Aura", f"A critical error stopped the mission: {e}", is_error=True)
+            logger.error(f"Critical error during mission for user {user_id}: {e}", exc_info=True)
+            await self._post_chat_message(user_id, "Aura", f"A critical error stopped the mission: {e}", is_error=True)
         finally:
-            self.is_mission_active = False
-            self.log("info", "Conductor has finished its cycle and is now idle.")
+            self.is_mission_active = False # Reset user-specific flag
+            self.log("info", f"Conductor finished cycle for user {user_id}.")
 
     def _is_result_an_error(self, result: any) -> (bool, Optional[str]):
         """Determines if a tool result constitutes an error."""
@@ -120,26 +113,32 @@ class ConductorService:
             return True, result.get('summary') or result.get('full_output') or "Unknown error from tool."
         return False, None
 
-    async def _execute_strategic_replan(self, failed_task: Dict):
+    async def _execute_strategic_replan(self, user_id: str, failed_task: Dict):
         """Triggers the Development Team to create a new plan to overcome a persistent failure."""
         await self.development_team_service.run_strategic_replan(
+            user_id=user_id,
             original_goal=self.original_user_goal,
             failed_task=failed_task,
             mission_log=self.mission_log_service.get_tasks()
         )
-        self._post_chat_message("Aura", "I have formulated a new plan. Resuming execution.", is_error=False)
 
-    async def _handle_mission_completion(self):
+    async def _handle_mission_completion(self, user_id: str):
         """Generates and posts the final summary when all tasks are done."""
-        self.log("success", "Mission Accomplished! All tasks completed.")
-        self.event_bus.emit("agent_status_changed", "Aura", "Mission Accomplished!", "fa5s.rocket")
-        self.event_bus.emit("mission_accomplished", MissionAccomplished())
+        self.log("success", f"Mission Accomplished for user {user_id}!")
+        summary = await self.development_team_service.generate_mission_summary(user_id, self.mission_log_service.get_tasks())
+        await self._post_chat_message(user_id, "Aura", summary)
+        await websocket_manager.broadcast_to_user({"type": "mission_success"}, user_id)
 
-        summary = await self.development_team_service.generate_mission_summary(self.mission_log_service.get_tasks())
-        self._post_chat_message("Aura", summary)
 
-    def _post_chat_message(self, sender: str, message: str, is_error: bool = False):
-        self.event_bus.emit("post_chat_message", PostChatMessage(sender, message, is_error))
+    async def _post_chat_message(self, user_id: str, sender: str, message: str, is_error: bool = False):
+        if message and message.strip():
+            msg_data = {
+                "type": "aura_response" if sender.lower() == 'aura' else "system_log",
+                "content": message
+            }
+            if is_error:
+                msg_data["type"] = "system_log"
+            await websocket_manager.broadcast_to_user(msg_data, user_id)
 
     def log(self, level: str, message: str):
         self.event_bus.emit("log_message_received", "ConductorService", level, message)

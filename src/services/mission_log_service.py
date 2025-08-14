@@ -3,9 +3,11 @@ import logging
 import json
 from pathlib import Path
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
+import asyncio
 
+from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
-from src.events import MissionLogUpdated, ProjectCreated
+from src.events import ProjectCreated
 
 if TYPE_CHECKING:
     from src.core.managers import ProjectManager
@@ -25,13 +27,9 @@ class MissionLogService:
         self.tasks: List[Dict[str, Any]] = []
         self._next_task_id = 1
         self._initial_user_goal = ""
-        self.event_bus.subscribe("project_created", self.handle_project_created)
+        # We no longer need to subscribe to this event as the service is created fresh per request
+        # self.event_bus.subscribe("project_created", self.handle_project_created)
         logger.info("MissionLogService initialized.")
-
-    def handle_project_created(self, event: ProjectCreated):
-        """Resets and loads the log when a new project becomes active."""
-        logger.info(f"ProjectCreated event received. Resetting and loading mission log for '{event.project_name}'.")
-        self.load_log_for_active_project()
 
     def _get_log_path(self) -> Optional[Path]:
         """Gets the path to the mission log file for the active project."""
@@ -39,19 +37,16 @@ class MissionLogService:
             return self.project_manager.active_project_path / MISSION_LOG_FILENAME
         return None
 
-    def _save_and_notify(self):
-        """Saves the current list of tasks to disk and notifies the UI."""
-        data_to_save = {
-            "initial_goal": self._initial_user_goal,
-            "tasks": self.tasks
-        }
-        self.event_bus.emit("mission_log_updated", MissionLogUpdated(tasks=self.get_tasks()))
-        logger.debug(f"UI notified of mission log update. Task count: {len(self.tasks)}")
-
+    def _save_log_to_disk(self):
+        """Saves the current list of tasks to disk."""
         log_path = self._get_log_path()
         if not log_path:
             return
 
+        data_to_save = {
+            "initial_goal": self._initial_user_goal,
+            "tasks": self.tasks
+        }
         log_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             with open(log_path, 'w', encoding='utf-8') as f:
@@ -59,6 +54,16 @@ class MissionLogService:
             logger.debug(f"Mission Log saved to disk at {log_path}.")
         except IOError as e:
             logger.error(f"Failed to save mission log to {log_path}: {e}")
+
+    async def _notify_ui(self, user_id: str):
+        """Notifies the UI of an update via WebSocket."""
+        message = {
+            "type": "mission_log_updated",
+            "content": {"tasks": self.get_tasks()}
+        }
+        # In a web context, we assume a single client_id for simplicity, but this could be expanded
+        await websocket_manager.broadcast_to_user(message, user_id)
+        logger.debug(f"UI notified for user {user_id} of mission log update.")
 
     def load_log_for_active_project(self):
         """Loads the mission log from disk for the currently active project."""
@@ -82,26 +87,32 @@ class MissionLogService:
                 self.tasks = []
         else:
             logger.info("No existing mission log found for this project. Starting fresh.")
-        self._save_and_notify()
 
-    def set_initial_plan(self, plan_steps: List[str], user_goal: str):
+        # Save on load to ensure file exists for new projects
+        self._save_log_to_disk()
+
+    async def set_initial_plan(self, user_id: str, plan_steps: List[str], user_goal: str):
         """Clears all tasks and sets a new plan, storing the original user goal."""
         self.tasks = []
         self._next_task_id = 1
         self._initial_user_goal = user_goal
 
-        self.add_task(
+        await self.add_task(
+            user_id=user_id,
             description="Index the project to build a contextual map.",
             tool_call={"tool_name": "index_project_context", "arguments": {"path": "."}},
             notify=False
         )
 
         for step in plan_steps:
-            self.add_task(description=step, notify=False)
-        self._save_and_notify()
-        logger.info(f"Initial plan with {len(self.tasks)} steps has been set.")
+            await self.add_task(user_id=user_id, description=step, notify=False)
 
-    def add_task(self, description: str, tool_call: Optional[Dict] = None, notify: bool = True) -> Dict[str, Any]:
+        self._save_log_to_disk()
+        await self._notify_ui(user_id)
+        logger.info(f"Initial plan with {len(self.tasks)} steps has been set for user {user_id}.")
+
+    async def add_task(self, user_id: str, description: str, tool_call: Optional[Dict] = None, notify: bool = True) -> \
+    Dict[str, Any]:
         """Adds a new task to the mission log."""
         if not description:
             raise ValueError("Task description cannot be empty.")
@@ -115,18 +126,21 @@ class MissionLogService:
         self.tasks.append(new_task)
         self._next_task_id += 1
         logger.info(f"Added task {new_task['id']}: '{description}'")
+
+        self._save_log_to_disk()
         if notify:
-            self._save_and_notify()
+            await self._notify_ui(user_id)
         return new_task
 
-    def mark_task_as_done(self, task_id: int) -> bool:
+    async def mark_task_as_done(self, user_id: str, task_id: int) -> bool:
         """Marks a specific task as completed."""
         for task in self.tasks:
             if task.get('id') == task_id:
                 if not task.get('done'):
                     task['done'] = True
-                    task['last_error'] = None # Clear error on success
-                    self._save_and_notify()
+                    task['last_error'] = None  # Clear error on success
+                    self._save_log_to_disk()
+                    await self._notify_ui(user_id)
                     logger.info(f"Marked task {task_id} as done.")
                 return True
         logger.warning(f"Attempted to mark non-existent task {task_id} as done.")
@@ -138,19 +152,19 @@ class MissionLogService:
             return list(self.tasks)
         return [task for task in self.tasks if task.get('done') == done]
 
-    def clear_all_tasks(self):
+    async def clear_all_tasks(self, user_id: str):
         """Removes all tasks from the log."""
         if self.tasks:
             self.tasks = []
             self._next_task_id = 1
             self._initial_user_goal = ""
-            self._save_and_notify()
+            self._save_log_to_disk()
+            await self._notify_ui(user_id)
             logger.info("All tasks cleared from the Mission Log.")
 
-    def replace_tasks_from_id(self, start_task_id: int, new_plan_steps: List[str]):
+    async def replace_tasks_from_id(self, user_id: str, start_task_id: int, new_plan_steps: List[str]):
         """
         Replaces a block of tasks starting from a given ID with a new plan.
-        The failed task and all subsequent tasks are removed.
         """
         start_index = -1
         for i, task in enumerate(self.tasks):
@@ -162,14 +176,13 @@ class MissionLogService:
             logger.error(f"Could not find task with ID {start_task_id} to start replacement.")
             return
 
-        # Remove the failed task and all subsequent tasks
         self.tasks = self.tasks[:start_index]
 
-        # Add the new plan steps
         for step in new_plan_steps:
-            self.add_task(description=step, notify=False)
+            await self.add_task(user_id=user_id, description=step, notify=False)
 
-        self._save_and_notify()
+        self._save_log_to_disk()
+        await self._notify_ui(user_id)
         logger.info(f"Replaced tasks from ID {start_task_id} with new plan of {len(new_plan_steps)} steps.")
 
     def get_initial_goal(self) -> str:

@@ -3,38 +3,45 @@ from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, status
 from pydantic import BaseModel
 
 from src.dependencies import get_aura_services
-# --- THIS IS THE FIX ---
-# ServiceManager lives in 'managers', DevelopmentTeamService lives in 'services'.
 from src.core.managers import ServiceManager, ProjectManager
-from src.services import DevelopmentTeamService
+from src.services import DevelopmentTeamService, ConductorService
+from src.db.models import User
+from src.api.auth import get_current_user
 
 router = APIRouter()
 
 
 class GenerateRequest(BaseModel):
     prompt: str
-    project_name: str  # The user must specify which project workspace to use
+    project_name: str
+
+
+class DispatchRequest(BaseModel):
+    project_name: str
 
 
 @router.post("/generate", status_code=status.HTTP_202_ACCEPTED)
 async def generate_agent_plan(
         request: GenerateRequest,
         background_tasks: BackgroundTasks,
+        current_user: User = Depends(get_current_user),
         aura_services: ServiceManager = Depends(get_aura_services)
 ):
     """
-    Accepts a user prompt and a project name, then starts the Aura planning
-    workflow as a background task within that user's specific project context.
+    Accepts a user prompt and project name, starts the Aura planning workflow.
     """
     dev_team: DevelopmentTeamService = aura_services.get_development_team_service()
     project_manager: ProjectManager = aura_services.get_project_manager()
 
-    # Load or create the project for the user
-    # Note: The desktop `new_project` creates a timestamped folder. We might want
-    # a simpler naming convention for the web.
-    project_path = project_manager.load_project(request.project_name)
-    if not project_path:
-        project_path = project_manager.new_project(request.project_name)
+    try:
+        project_path = project_manager.load_project(request.project_name)
+        if not project_path:
+            project_path = project_manager.new_project(request.project_name)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create or load project: {e}"
+        )
 
     if not project_path:
         raise HTTPException(
@@ -42,12 +49,45 @@ async def generate_agent_plan(
             detail="Failed to create or load the user project workspace."
         )
 
-    # Add the long-running async function to FastAPI's background tasks.
-    # This immediately frees up the server to return a response.
+    user_id = str(current_user.id)
     background_tasks.add_task(
         dev_team.run_aura_planner_workflow,
+        user_id=user_id,
         user_idea=request.prompt,
-        conversation_history=[]  # Placeholder for now
+        conversation_history=[]
     )
 
-    return {"message": "Aura has received your request and the mission is underway."}
+    return {"message": "Aura has received your request and is formulating a plan."}
+
+
+@router.post("/dispatch", status_code=status.HTTP_202_ACCEPTED)
+async def dispatch_agent_mission(
+        request: DispatchRequest,
+        background_tasks: BackgroundTasks,
+        current_user: User = Depends(get_current_user),
+        aura_services: ServiceManager = Depends(get_aura_services)
+):
+    """
+    Starts the Conductor's autonomous execution loop for a given project.
+    """
+    conductor: ConductorService = aura_services.conductor_service
+    project_manager: ProjectManager = aura_services.get_project_manager()
+
+    # Ensure the project exists and load its context (especially the mission log)
+    project_path = project_manager.load_project(request.project_name)
+    if not project_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project '{request.project_name}' not found for this user."
+        )
+
+    # The mission log is loaded when the service manager is initialized,
+    # specifically when the ProjectManager loads the project.
+
+    user_id = str(current_user.id)
+    background_tasks.add_task(
+        conductor.execute_mission_in_background,
+        user_id=user_id
+    )
+
+    return {"message": "Dispatch acknowledged. Aura is now executing the mission plan."}
