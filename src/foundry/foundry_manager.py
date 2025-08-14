@@ -1,5 +1,4 @@
-# foundry/foundry_manager.py
-import copy
+# src/foundry/foundry_manager.py
 import importlib
 import inspect
 import logging
@@ -9,26 +8,6 @@ from typing import Any, Callable, Dict, List, Optional
 from src.foundry.blueprints import Blueprint
 
 logger = logging.getLogger(__name__)
-
-
-def _uppercase_schema_types(schema: Any) -> Any:
-    """
-    Recursively traverses a JSON schema dict and uppercases 'type' values.
-    This is a specific workaround for the Google Gemini API's SDK, which
-    expects enum-style uppercase strings (e.g., 'OBJECT') instead of
-    standard JSON schema lowercase strings (e.g., 'object').
-    """
-    if isinstance(schema, dict):
-        new_dict = {}
-        for key, value in schema.items():
-            if key == 'type' and isinstance(value, str):
-                new_dict[key] = value.upper()
-            else:
-                new_dict[key] = _uppercase_schema_types(value)
-        return new_dict
-    elif isinstance(schema, list):
-        return [_uppercase_schema_types(item) for item in schema]
-    return schema
 
 
 class FoundryManager:
@@ -141,21 +120,15 @@ class FoundryManager:
 
     def get_llm_tool_definitions(self) -> List[Dict[str, Any]]:
         """
-        Gets the list of tool definitions, processing them for provider-specific quirks.
+        Gets the list of tool definitions in a generic format, ready to be
+        transformed by a provider-specific method if necessary.
         """
         definitions: List[Dict[str, Any]] = []
         for bp in self._blueprints.values():
-            # Create a deep copy to avoid modifying the original blueprint's schema in memory
-            params_copy = copy.deepcopy(bp.parameters)
-
-            # ** THIS IS THE FIX **
-            # Recursively uppercase the 'type' fields for Gemini compatibility
-            processed_params = _uppercase_schema_types(params_copy)
-
             tool_def = {
                 "name": bp.id,
                 "description": bp.description,
-                "parameters": processed_params  # Use the processed version
+                "parameters": bp.parameters
             }
             definitions.append(tool_def)
         return definitions

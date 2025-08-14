@@ -10,13 +10,12 @@ from src.api.auth import get_current_user
 
 router = APIRouter(tags=["Model Assignments"])
 
-# This dictionary defines the next-gen models available for each provider.
-# This is our "future-proof" list.
-NEXT_GEN_MODELS: Dict[str, List[str]] = {
-    "openai": ["gpt-5"],
-    "google": ["gemini-2.5-pro", "gemini-2.5-flash"],
-    "anthropic": ["claude-4.1"],
-    "deepseek": ["deepseek-reasoning"],
+# This dictionary defines the models available for each provider.
+MODELS_TO_DISPLAY: Dict[str, List[str]] = {
+    "openai": ["gpt-4o", "gpt-4-turbo", "gpt-5"],  # gpt-5 is for future-proofing
+    "google": ["gemini-1.5-pro-latest", "gemini-2.5-pro", "gemini-2.5-flash"], # future-proofing
+    "anthropic": ["claude-3.5-sonnet-20240620", "claude-3-opus-20240229"],
+    "deepseek": ["deepseek-chat", "deepseek-reasoning", "deepseek-coder"],
 }
 
 
@@ -33,7 +32,7 @@ def get_available_models(
     configured_providers = {key.provider_name for key in configured_keys}
 
     available_models: Dict[str, List[str]] = {}
-    for provider, models_list in NEXT_GEN_MODELS.items():
+    for provider, models_list in MODELS_TO_DISPLAY.items():
         if provider in configured_providers:
             available_models[provider] = models_list
 

@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Type, Optional
 
 # This import will now work correctly because of our new Dockerfile setup.
-from src.providers import BaseProvider, GoogleProvider, OpenAIProvider
+from src.providers import BaseProvider, GoogleProvider, OpenAIProvider, AnthropicProvider, DeepseekProvider
 
 app = FastAPI(
     title="Aura LLM Server",
@@ -12,15 +12,12 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# --- NEW: Provider Map ---
-# This dictionary maps the provider name from the request to the
-# appropriate provider class. Adding a new provider is now a one-line change.
 PROVIDER_MAP: Dict[str, Type[BaseProvider]] = {
     "google": GoogleProvider,
     "openai": OpenAIProvider,
-    # "anthropic": AnthropicProvider, # <-- Easy to add new providers here!
+    "anthropic": AnthropicProvider,
+    "deepseek": DeepseekProvider,
 }
-# --- End of New Section ---
 
 class LLMRequest(BaseModel):
     provider_name: str
@@ -29,7 +26,6 @@ class LLMRequest(BaseModel):
     temperature: float
     is_json: bool = False
     tools: Optional[List[Dict[str, Any]]] = None
-
 
 @app.post("/invoke")
 async def invoke_llm(
@@ -43,7 +39,6 @@ async def invoke_llm(
     if not x_provider_api_key:
         raise HTTPException(status_code=400, detail="Provider API key is missing from headers.")
 
-    # --- REFACTORED: Use the Provider Map ---
     provider_class = PROVIDER_MAP.get(request.provider_name)
     if not provider_class:
         raise HTTPException(
@@ -55,18 +50,21 @@ async def invoke_llm(
         provider = provider_class(x_provider_api_key)
     except ValueError as e:
          raise HTTPException(status_code=500, detail=f"Failed to initialize provider: {e}")
-    # --- End of Refactor ---
+
+    # Transform tools for the specific provider if they exist
+    provider_specific_tools = None
+    if request.tools:
+        provider_specific_tools = provider.transform_tools_for_provider(request.tools)
 
     response_text = await provider.get_chat_response(
         model_name=request.model_name,
         messages=request.messages,
         temperature=request.temperature,
         is_json=request.is_json,
-        tools=request.tools
+        tools=provider_specific_tools
     )
 
     if response_text.startswith("Error:"):
-        # Pass the error from the provider back to the main app
         raise HTTPException(status_code=500, detail=response_text)
 
     return {"reply": response_text}

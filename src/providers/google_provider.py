@@ -2,6 +2,7 @@
 import google.generativeai as genai
 from typing import List, Dict, Any, Optional
 import json
+import copy
 from .base_provider import BaseProvider
 
 
@@ -13,9 +14,40 @@ class GoogleProvider(BaseProvider):
         except Exception as e:
             raise ValueError(f"Failed to configure Google AI: {e}")
 
+    def _uppercase_schema_types(self, schema: Any) -> Any:
+        """
+        Recursively traverses a JSON schema dict and uppercases 'type' values
+        for Gemini compatibility.
+        """
+        if isinstance(schema, dict):
+            new_dict = {}
+            for key, value in schema.items():
+                if key == 'type' and isinstance(value, str):
+                    new_dict[key] = value.upper()
+                else:
+                    new_dict[key] = self._uppercase_schema_types(value)
+            return new_dict
+        elif isinstance(schema, list):
+            return [self._uppercase_schema_types(item) for item in schema]
+        return schema
+
+    def transform_tools_for_provider(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Transforms the tool schema to meet Gemini's specific requirements (uppercase types)."""
+        if not tools:
+            return []
+
+        transformed_tools = []
+        for tool in tools:
+            tool_copy = copy.deepcopy(tool)
+            if 'parameters' in tool_copy:
+                tool_copy['parameters'] = self._uppercase_schema_types(tool_copy['parameters'])
+            transformed_tools.append(tool_copy)
+        return transformed_tools
+
     async def get_chat_response(self, model_name: str, messages: List[Dict[str, Any]], temperature: float,
                                 is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> str:
         try:
+            # Note: Transformation is now expected to happen in llm-server before this call
             model = genai.GenerativeModel(model_name, tools=tools)
             generation_config = genai.types.GenerationConfig(
                 temperature=temperature,
