@@ -9,7 +9,10 @@ from src.services import DevelopmentTeamService, ConductorService
 from src.db.models import User
 from src.api.auth import get_current_user
 
-router = APIRouter()
+router = APIRouter(
+    prefix="/projects",
+    tags=["Project Management"]
+)
 
 
 class GenerateRequest(BaseModel):
@@ -108,7 +111,20 @@ async def dispatch_agent_mission(
     return {"message": "Dispatch acknowledged. Aura is now executing the mission plan."}
 
 
-@router.post("/projects/{project_name}", status_code=status.HTTP_201_CREATED)
+@router.get("/", response_model=List[str])
+async def list_user_projects(
+        current_user: User = Depends(get_current_user),
+        aura_services: ServiceManager = Depends(get_aura_services)
+):
+    """Lists all project names for the current user."""
+    project_manager: ProjectManager = aura_services.get_project_manager()
+    try:
+        return project_manager.list_projects()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list projects: {e}")
+
+
+@router.post("/{project_name}", status_code=status.HTTP_201_CREATED)
 async def create_new_project(
         project_name: str,
         current_user: User = Depends(get_current_user),
@@ -125,7 +141,7 @@ async def create_new_project(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create project: {e}")
 
 
-@router.delete("/projects/{project_name}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{project_name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_existing_project(
         project_name: str,
         current_user: User = Depends(get_current_user),

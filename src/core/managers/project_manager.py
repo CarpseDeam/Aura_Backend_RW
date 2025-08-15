@@ -34,6 +34,12 @@ class ProjectManager:
         self.venv_manager = None
         self.is_existing_project = False
 
+    def list_projects(self) -> List[str]:
+        """Lists the names of all project directories in the user's workspace."""
+        if not self.workspace_root.exists():
+            return []
+        return sorted([d.name for d in self.workspace_root.iterdir() if d.is_dir()])
+
     @property
     def active_project_name(self) -> str:
         return self.active_project_path.name if self.active_project_path else "(none)"
