@@ -70,13 +70,14 @@ class ProjectManager:
             return self.venv_manager.get_info()
         return {"active": False, "reason": "No project"}
 
-    def new_project(self, project_name: str = "New_AI_Project") -> Optional[str]:
-        """Creates a new project directory, repo, and virtual environment."""
-        timestamp = datetime.now().strftime("%Ym%d_%H%M%S")
-        dir_name = f"{''.join(c for c in project_name if c.isalnum())}_{timestamp}"
-        project_path = self.workspace_root / dir_name
-        project_path.mkdir(parents=True, exist_ok=True)
+    def new_project(self, project_name: str) -> Optional[str]:
+        """Creates a new project directory with a precise name, repo, and venv."""
+        project_path = self.workspace_root / project_name
+        if project_path.exists():
+            raise FileExistsError(f"Project '{project_name}' already exists.")
+
         print(f"[ProjectManager] Creating new project at: {project_path}")
+        project_path.mkdir(parents=True, exist_ok=True)
 
         self.active_project_path = project_path
         self.is_existing_project = False
@@ -101,11 +102,33 @@ class ProjectManager:
         print(f"[ProjectManager] Successfully created new project: {project_path}")
         return str(project_path)
 
+    def delete_project(self, project_name: str) -> bool:
+        """Safely deletes a project directory and all its contents."""
+        project_path = self.workspace_root / project_name
+        project_path = project_path.resolve()
+
+        # --- CRITICAL SAFETY CHECK ---
+        # Ensure the path to be deleted is a direct child of the workspace root.
+        if not project_path.exists():
+            raise FileNotFoundError(f"Project '{project_name}' not found.")
+        if self.workspace_root not in project_path.parents or self.workspace_root == project_path:
+             raise ValueError("Cannot delete a project outside of the user's workspace.")
+
+        shutil.rmtree(project_path)
+        print(f"[ProjectManager] Successfully deleted project: {project_path}")
+
+        # If the deleted project was the active one, clear it.
+        if self.active_project_path and self.active_project_path == project_path:
+            self.clear_active_project()
+
+        return True
+
     def load_project(self, path: str) -> Optional[str]:
         """Loads an existing project, initializing managers for it."""
-        project_path = Path(path).resolve()
+        # For the web API, 'path' will just be the project name.
+        project_path = (self.workspace_root / path).resolve()
         if not project_path.is_dir():
-            print(f"[ProjectManager] Load failed: {path} is not a directory.")
+            print(f"[ProjectManager] Load failed: {path} is not a directory in the workspace.")
             return None
 
         print(f"[ProjectManager] Loading project from: {project_path}")

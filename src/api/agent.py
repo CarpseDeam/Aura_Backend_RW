@@ -59,20 +59,16 @@ async def generate_agent_plan(
     project_manager: ProjectManager = aura_services.get_project_manager()
 
     try:
-        # We use the project name as the folder name directly for simplicity now
         project_path = project_manager.load_project(request.project_name)
         if not project_path:
-            project_path = project_manager.new_project(request.project_name)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project '{request.project_name}' not found. Cannot generate plan."
+            )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create or load project: {e}"
-        )
-
-    if not project_path:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create or load the user project workspace."
+            detail=f"Failed to load project: {e}"
         )
 
     user_id = str(current_user.id)
@@ -110,6 +106,42 @@ async def dispatch_agent_mission(
         user_id=user_id
     )
     return {"message": "Dispatch acknowledged. Aura is now executing the mission plan."}
+
+
+@router.post("/projects/{project_name}", status_code=status.HTTP_201_CREATED)
+async def create_new_project(
+        project_name: str,
+        current_user: User = Depends(get_current_user),
+        aura_services: ServiceManager = Depends(get_aura_services)
+):
+    """Creates a new, empty project workspace for the user."""
+    project_manager: ProjectManager = aura_services.get_project_manager()
+    try:
+        project_path = project_manager.new_project(project_name)
+        return {"message": "Project created successfully.", "project_path": project_path}
+    except FileExistsError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create project: {e}")
+
+
+@router.delete("/projects/{project_name}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_existing_project(
+        project_name: str,
+        current_user: User = Depends(get_current_user),
+        aura_services: ServiceManager = Depends(get_aura_services)
+):
+    """Deletes an existing project workspace for the user."""
+    project_manager: ProjectManager = aura_services.get_project_manager()
+    try:
+        project_manager.delete_project(project_name)
+        return None
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ValueError as e: # For safety violations
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to delete project: {e}")
 
 
 @router.get("/workspace/{project_name}/files", response_model=List[Dict[str, Any]])
