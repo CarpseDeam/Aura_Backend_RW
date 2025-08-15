@@ -11,3 +11,4 @@ python-jose[cryptography]
 openai
 chromadb
 python-multipart
+pycodestyle
