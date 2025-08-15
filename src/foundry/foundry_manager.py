@@ -84,7 +84,7 @@ class FoundryManager:
     def _discover_and_load_actions(self) -> None:
         try:
             actions_dir = Path(__file__).parent / "actions"
-            package_name = "foundry.actions"
+            package_name = "src.foundry.actions"
             if not actions_dir.is_dir() or not (actions_dir / "__init__.py").exists():
                 logger.error(
                     f"Action discovery failed: The directory 'foundry/actions/' or its '__init__.py' file is missing.")
