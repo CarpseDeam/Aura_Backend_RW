@@ -3,8 +3,8 @@ from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 from typing import List, Dict, Any, Type, Optional
 
-# This import will now work correctly because of our new Dockerfile setup.
-from src.providers import BaseProvider, GoogleProvider, OpenAIProvider, AnthropicProvider, DeepseekProvider
+# This import will now work because the 'providers' package is inside this service.
+from providers import BaseProvider, GoogleProvider, OpenAIProvider, AnthropicProvider, DeepseekProvider
 
 app = FastAPI(
     title="Aura LLM Server",

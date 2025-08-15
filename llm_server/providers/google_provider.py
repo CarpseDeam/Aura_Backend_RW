@@ -1,4 +1,4 @@
-# src/providers/google_provider.py
+# llm_server/providers/google_provider.py
 import google.generativeai as genai
 from typing import List, Dict, Any, Optional
 import json
@@ -47,19 +47,51 @@ class GoogleProvider(BaseProvider):
     async def get_chat_response(self, model_name: str, messages: List[Dict[str, Any]], temperature: float,
                                 is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> str:
         try:
-            # Note: Transformation is now expected to happen in llm-server before this call
-            model = genai.GenerativeModel(model_name, tools=tools)
+            system_prompt = None
+            conversation_messages = []
+            for msg in messages:
+                if msg.get('role') == 'system' and system_prompt is None:
+                    system_prompt = msg.get('content', '')
+                else:
+                    conversation_messages.append(msg)
+
+            prepared_messages = []
+            for msg in conversation_messages:
+                role = msg.get("role")
+                content = msg.get("content")
+
+                if not (role and content):
+                    continue
+
+                if role == "assistant":
+                    role = "model"
+
+                if role == "system":
+                    continue
+
+                if role not in ["user", "model"]:
+                    role = "user"
+
+                prepared_messages.append({
+                    "role": role,
+                    "parts": [{"text": content}]
+                })
+
+            model = genai.GenerativeModel(
+                model_name,
+                tools=tools,
+                system_instruction=system_prompt
+            )
             generation_config = genai.types.GenerationConfig(
                 temperature=temperature,
                 response_mime_type="application/json" if is_json and not tools else "text/plain",
             )
 
             response = await model.generate_content_async(
-                contents=messages,
+                contents=prepared_messages,
                 generation_config=generation_config
             )
 
-            # Check for a tool call in the response
             if response.candidates and response.candidates[0].content.parts:
                 part = response.candidates[0].content.parts[0]
                 if part.function_call:
@@ -69,7 +101,15 @@ class GoogleProvider(BaseProvider):
                     }
                     return json.dumps(tool_call)
 
-            # Fallback to text if no tool call
-            return response.text
+            if response.text:
+                return response.text
+
+            try:
+                finish_reason = response.candidates[0].finish_reason.name if response.candidates else "UNKNOWN"
+                safety_ratings = response.prompt_feedback.safety_ratings if response.prompt_feedback else "UNKNOWN"
+                return f"Error: Google API returned an empty response. Finish reason: {finish_reason}. Safety ratings: {safety_ratings}"
+            except (IndexError, AttributeError):
+                return "Error: Google API returned an empty or invalid response."
+
         except Exception as e:
             return f"Error: Google API call failed. Details: {e}"
