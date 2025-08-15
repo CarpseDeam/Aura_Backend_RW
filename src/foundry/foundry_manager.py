@@ -61,7 +61,7 @@ class FoundryManager:
     def _discover_and_load_blueprints(self) -> None:
         try:
             blueprints_dir = Path(__file__).parent.parent / "blueprints"
-            package_name = "blueprints"
+            package_name = "src.blueprints"
             for file_path in blueprints_dir.glob("*.py"):
                 if file_path.name.startswith("__"): continue
                 module_name = f"{package_name}.{file_path.stem}"
