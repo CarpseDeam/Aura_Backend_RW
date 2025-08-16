@@ -93,14 +93,8 @@ class DevelopmentTeamService:
             conversation_history="\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history]),
             user_prompt=user_prompt
         )
-        # For companion chat, we create a system prompt and then the user message
-        messages = [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": user_prompt}
-        ]
-        # We merge the conversation history for context, but keep it clean
-        full_history = conversation_history + messages
-        return await self._make_llm_call(int(user_id), "chat", full_history)
+        messages = conversation_history + [{"role": "user", "content": user_prompt}]
+        return await self._make_llm_call(int(user_id), "chat", messages)
 
     async def _post_chat_message(self, user_id: str, sender: str, message: str, is_error: bool = False):
         if message and message.strip():
@@ -123,12 +117,17 @@ class DevelopmentTeamService:
 
     async def run_aura_planner_workflow(self, user_id: str, user_idea: str, conversation_history: list):
         self.log("info", f"Aura planner workflow initiated for user {user_id}: '{user_idea[:50]}...'")
+
+        # This is the fix: The conversation history is now passed to the prompt.
+        history_str = "\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history])
+
         prompt = AURA_PLANNER_PROMPT.format(
             SENIOR_ARCHITECT_HEURISTIC_RULE=SENIOR_ARCHITECT_HEURISTIC_RULE.strip(),
-            user_idea=user_idea
+            conversation_history=history_str,
+            user_idea=user_idea  # The final prompt is still the trigger
         )
-        # The planner should be stateless and not receive the full chat history.
-        # It acts only on the final, confirmed user idea.
+
+        # The planner now gets the full context.
         messages = [{"role": "user", "content": prompt}]
 
         response_str = await self._make_llm_call(int(user_id), "planner", messages, is_json=True)

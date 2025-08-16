@@ -30,6 +30,9 @@ AURA_PLANNER_PROMPT = textwrap.dedent("""
     }}
     ```
     ---
+    **Conversation History:**
+    {conversation_history}
+    ---
     **User's Request:** "{user_idea}"
 
     Now, provide the complete, professional, JSON plan, following all directives.
