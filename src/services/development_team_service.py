@@ -313,6 +313,9 @@ class DevelopmentTeamService:
         )
         messages = [{"role": "user", "content": prompt}]
 
+        # THIS IS THE AUTOPSY. We print the exact tools list before sending.
+        print(f"AURA_AUTOPSY_TOOLS: {json.dumps(available_tools, indent=2)}")
+
         response_str = await self._make_llm_call(int(user_id), "coder", messages, is_json=True, tools=available_tools)
 
         if response_str.startswith("Error:"):
