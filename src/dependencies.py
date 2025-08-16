@@ -1,6 +1,7 @@
 from pathlib import Path
 from fastapi import Depends
 from sqlalchemy.orm import Session
+import os
 from src.event_bus import EventBus
 from src.core.managers import ProjectManager, ServiceManager
 from src.db.database import get_db
@@ -28,7 +29,10 @@ def get_aura_services(
 
     persistent_storage_path = Path("/data")
     user_workspace_path = persistent_storage_path / "workspaces" / user_id
-    user_workspace_path.mkdir(parents=True, exist_ok=True)
+
+    # THIS IS THE FIX: Using os.makedirs for maximum reliability.
+    # This command creates the entire directory path if it doesn't exist.
+    os.makedirs(user_workspace_path, exist_ok=True)
 
     event_bus = EventBus()
     project_manager = ProjectManager(event_bus, workspace_path=str(user_workspace_path))
