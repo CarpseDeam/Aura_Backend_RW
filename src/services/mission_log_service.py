@@ -97,13 +97,6 @@ class MissionLogService:
         self._next_task_id = 1
         self._initial_user_goal = user_goal
 
-        await self.add_task(
-            user_id=user_id,
-            description="Index the project to build a contextual map.",
-            tool_call={"tool_name": "index_project_context", "arguments": {"path": "."}},
-            notify=False
-        )
-
         for step in plan_steps:
             await self.add_task(user_id=user_id, description=step, notify=False)
 

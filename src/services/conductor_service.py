@@ -68,7 +68,8 @@ class ConductorService:
                 task_succeeded = False
 
                 while retry_count <= self.MAX_RETRIES_PER_TASK:
-                    self.log("info", f"Executing task {current_task['id']} for user {user_id}: {current_task['description']}")
+                    self.log("info",
+                             f"Executing task {current_task['id']} for user {user_id}: {current_task['description']}")
                     tool_call = await self.development_team_service.run_coding_task(
                         user_id=user_id,
                         task=current_task,
@@ -86,17 +87,21 @@ class ConductorService:
 
                     if not result_is_error:
                         await self.mission_log_service.mark_task_as_done(user_id, current_task['id'])
-                        await self._post_chat_message(user_id, "Conductor", f"Task completed: {current_task['description']}")
+                        await self._post_chat_message(user_id, "Conductor",
+                                                      f"Task completed: {current_task['description']}")
                         task_succeeded = True
                         break
                     else:
                         current_task['last_error'] = error_message
                         retry_count += 1
-                        self.log("warning", f"Task {current_task['id']} failed for user {user_id}. Error: {error_message}.")
-                        await self._post_chat_message(user_id, "Conductor", f"Task failed, retrying. Error: {error_message}", is_error=True)
+                        self.log("warning",
+                                 f"Task {current_task['id']} failed for user {user_id}. Error: {error_message}.")
+                        await self._post_chat_message(user_id, "Conductor",
+                                                      f"Task failed, retrying. Error: {error_message}", is_error=True)
 
                 if not task_succeeded:
-                    self.log("error", f"Task {current_task['id']} failed for user {user_id} after retries. Re-planning.")
+                    self.log("error",
+                             f"Task {current_task['id']} failed for user {user_id} after retries. Re-planning.")
                     await self._post_chat_message(user_id, "Aura", "I'm stuck. Rethinking my approach.", is_error=True)
                     await self._execute_strategic_replan(user_id, current_task)
                 else:
@@ -109,12 +114,28 @@ class ConductorService:
         finally:
             self.log("info", f"Conductor finished inner execution loop for user {user_id}.")
 
-
     def _is_result_an_error(self, result: any) -> (bool, Optional[str]):
-        if isinstance(result, str) and result.strip().lower().startswith("error"):
-            return True, result
-        if isinstance(result, dict) and result.get('status', 'success').lower() in ["failure", "error"]:
-            return True, result.get('summary') or result.get('full_output') or "Unknown error from tool."
+        """Robustly checks if a tool execution result is an error."""
+        if result is None:
+            # A None result is often a sign of a silent failure or an unhandled case.
+            return True, "Tool returned an empty result, which indicates a potential failure."
+
+        if isinstance(result, str):
+            # Check for explicit error prefixes, case-insensitive.
+            # Also check for common failure indicators.
+            result_lower = result.strip().lower()
+            if result_lower.startswith("error") or "failed" in result_lower or "not found" in result_lower:
+                return True, result
+
+        if isinstance(result, dict):
+            # Check for a status key indicating failure.
+            status = result.get('status', 'success').lower()
+            if status in ["failure", "error"]:
+                # Provide a detailed error message from the dictionary if possible.
+                return True, result.get('summary') or result.get(
+                    'full_output') or "Tool indicated failure without a detailed message."
+
+        # If none of the above, assume success.
         return False, None
 
     async def _execute_strategic_replan(self, user_id: str, failed_task: Dict):
@@ -128,10 +149,10 @@ class ConductorService:
 
     async def _handle_mission_completion(self, user_id: str):
         self.log("success", f"Mission Accomplished for user {user_id}!")
-        summary = await self.development_team_service.generate_mission_summary(user_id, self.mission_log_service.get_tasks())
+        summary = await self.development_team_service.generate_mission_summary(user_id,
+                                                                               self.mission_log_service.get_tasks())
         await self._post_chat_message(user_id, "Aura", summary)
         await websocket_manager.broadcast_to_user({"type": "mission_success"}, user_id)
-
 
     async def _post_chat_message(self, user_id: str, sender: str, message: str, is_error: bool = False):
         if message and message.strip():
