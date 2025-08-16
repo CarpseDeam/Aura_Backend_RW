@@ -21,14 +21,15 @@ async def write_file(path: str, content: str, event_bus: EventBus, project_manag
     This version first streams the content to the GUI before writing.
     """
     try:
-        # --- CRITICAL VALIDATION ---
-        if not content or not content.strip():
-            error_message = f"Error: Attempted to write an empty or whitespace-only file to '{path}'. Operation aborted."
-            logger.warning(error_message)
-            return error_message
+        # --- THE FIX: Removed the strict check that prevented writing empty files. ---
+        # It's valid to create an empty file (e.g., __init__.py).
+        # We will now write whatever content is provided, including an empty string.
 
         logger.info(f"Attempting to stream and write to file: {path}")
         path_obj = Path(path)
+
+        # The 'content' might be None from some tool calls, default to empty string.
+        content = content or ""
 
         # Determine the relative path for the event
         relative_path = path
