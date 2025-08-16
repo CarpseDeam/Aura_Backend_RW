@@ -195,7 +195,8 @@ class DevelopmentTeamService:
     async def _generate_code_for_task(self, user_id: str, path: str, task_description: str) -> str:
         """Dedicated method to invoke the Coder AI to generate code for a file."""
         self.log("info", f"Generating code for '{path}'...")
-        file_tree = "\n".join(sorted(self.project_manager.get_project_files().keys())) or "The project is currently empty."
+        file_tree = "\n".join(
+            sorted(self.project_manager.get_project_files().keys())) or "The project is currently empty."
         prompt = CODER_PROMPT_STREAMING.format(
             path=path, task_description=task_description, file_tree=file_tree,
             TYPE_HINTING_RULE=TYPE_HINTING_RULE.strip(), DOCSTRING_RULE=DOCSTRING_RULE.strip(),
@@ -205,8 +206,10 @@ class DevelopmentTeamService:
 
     async def run_strategic_replan(self, user_id: str, original_goal: str, failed_task: Dict, mission_log: List[Dict]):
         self.log("info", "Strategic re-plan initiated.")
-        await self._post_chat_message(user_id, "Aura", "Hitting a roadblock. Rethinking the plan...")
-        mission_log_str = "\n".join([f"- ID {t['id']} ({'Done' if t['done'] else 'Pending'}): {t['description']}" for t in mission_log])
+        # THE FIX: This line is removed. The Conductor is now responsible for this message.
+        # await self._post_chat_message(user_id, "Aura", "Hitting a roadblock. Rethinking the plan...")
+        mission_log_str = "\n".join(
+            [f"- ID {t['id']} ({'Done' if t['done'] else 'Pending'}): {t['description']}" for t in mission_log])
         failed_task_str = f"ID {failed_task['id']}: {failed_task['description']}"
         error_message = failed_task.get('last_error', 'No specific error message was recorded.')
         prompt = AURA_REPLANNER_PROMPT.format(
@@ -239,6 +242,16 @@ class DevelopmentTeamService:
         messages = [{"role": "user", "content": prompt}]
         summary = await self._make_llm_call(int(user_id), "chat", messages)
         return summary.strip() if summary.strip() else "Mission accomplished!"
+
+    async def _post_chat_message(self, user_id: str, sender: str, message: str, is_error: bool = False):
+        if message and message.strip():
+            msg_data = {
+                "type": "aura_response" if sender.lower() == 'aura' else "system_log",
+                "content": message
+            }
+            if is_error:
+                msg_data["type"] = "system_log"
+            await websocket_manager.broadcast_to_user(msg_data, user_id)
 
     async def handle_error(self, user_id: str, agent: str, error_msg: str):
         self.log("error", f"{agent} failed for user {user_id}: {error_msg}")
