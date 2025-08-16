@@ -1,11 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+# StaticFiles is REMOVED. The backend will not serve files.
 
 from src.db.database import engine
 from src.db import models
-# --- CORRECTED IMPORTS ---
-# We now import the specific modules that actually exist.
 from src.api import auth, agent, keys, assignments, missions, websockets
 
 # This creates your database tables if they don't exist
@@ -18,6 +16,7 @@ app = FastAPI(
 )
 
 # --- CORS Middleware ---
+# This allows your Vercel frontend to talk to your Railway backend
 origins = [
     "https://aura-frontend-two.vercel.app",
     "http://localhost",
@@ -34,9 +33,8 @@ app.add_middleware(
 )
 
 # --- API Routers ---
+# These are the only things the backend needs to know about.
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
-# --- CORRECTED ROUTER INCLUDES ---
-# We now use the 'router' object from the 'keys' and 'assignments' modules.
 app.include_router(keys.router, prefix="/api-keys", tags=["Settings"])
 app.include_router(assignments.router, prefix="/api/assignments", tags=["Settings"])
 app.include_router(missions.router, prefix="/api/missions", tags=["Missions"])
@@ -44,6 +42,5 @@ app.include_router(websockets.router, tags=["WebSockets"])
 app.include_router(agent.router, prefix="/agent", tags=["Agent"])
 
 
-# --- Static Files Mount ---
-# This serves your frontend from the 'static' directory.
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# THE app.mount LINE HAS BEEN COMPLETELY REMOVED.
+# This will fix the deployment crash.
