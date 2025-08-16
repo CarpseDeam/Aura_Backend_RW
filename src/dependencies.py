@@ -42,12 +42,14 @@ def get_aura_services(
     # --- Initialize services with shared components ---
     mission_log_service = MissionLogService(project_manager, event_bus)
 
-    rag_db_path = user_workspace_path / ".rag_db"
-    vector_context_service = VectorContextService(
-        db_path=str(rag_db_path),
-        user_db_session=db,
-        user_id=current_user.id
-    )
+    # --- STRATEGIC BYPASS: Temporarily disable VectorContextService ---
+    vector_context_service = None
+    # rag_db_path = user_workspace_path / ".rag_db"
+    # vector_context_service = VectorContextService(
+    #     db_path=str(rag_db_path),
+    #     user_db_session=db,
+    #     user_id=current_user.id
+    # )
 
     tool_runner_service = ToolRunnerService(
         event_bus=event_bus,

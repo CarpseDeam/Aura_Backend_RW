@@ -11,7 +11,8 @@ from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
 from src.prompts.creative import AURA_PLANNER_PROMPT, AURA_REPLANNER_PROMPT, AURA_MISSION_SUMMARY_PROMPT
 from src.prompts.coder import CODER_PROMPT, CODER_PROMPT_STREAMING
-from src.prompts.master_rules import JSON_OUTPUT_RULE, SENIOR_ARCHITECT_HEURISTIC_RULE, TYPE_HINTING_RULE, DOCSTRING_RULE, CLEAN_CODE_RULE
+from src.prompts.master_rules import JSON_OUTPUT_RULE, SENIOR_ARCHITECT_HEURISTIC_RULE, TYPE_HINTING_RULE, \
+    DOCSTRING_RULE, CLEAN_CODE_RULE
 from src.prompts.companion import COMPANION_PROMPT
 from src.db import crud
 
@@ -30,15 +31,15 @@ class DevelopmentTeamService:
     """
 
     def __init__(
-        self,
-        event_bus: EventBus,
-        llm_client: "LLMClient",
-        project_manager: "ProjectManager",
-        mission_log_service: "MissionLogService",
-        vector_context_service: "VectorContextService",
-        foundry_manager: "FoundryManager",
-        db_session: Session,
-        user_id: int
+            self,
+            event_bus: EventBus,
+            llm_client: "LLMClient",
+            project_manager: "ProjectManager",
+            mission_log_service: "MissionLogService",
+            vector_context_service: "VectorContextService",
+            foundry_manager: "FoundryManager",
+            db_session: Session,
+            user_id: int
     ):
         self.event_bus = event_bus
         self.llm_client = llm_client
@@ -94,7 +95,8 @@ class DevelopmentTeamService:
                             if line:
                                 data = json.loads(line)
                                 if "final_response" in data:
-                                    return data["final_response"].get("reply", "Error: Invalid response from LLM service.")
+                                    return data["final_response"].get("reply",
+                                                                      "Error: Invalid response from LLM service.")
                         return "Error: Stream ended without a final response object."
                     else:
                         error_detail = await response.text()
@@ -250,7 +252,6 @@ class DevelopmentTeamService:
 
         return generated_code
 
-
     async def run_coding_task(self, user_id: str, task: Dict[str, any], last_error: Optional[str] = None) -> Optional[
         Dict[str, str]]:
         """
@@ -269,12 +270,21 @@ class DevelopmentTeamService:
             mission_log_history = "This is the first task."
         if last_error:
             current_task_description += f"\n\n**PREVIOUS ATTEMPT FAILED!** Last error: `{last_error}`. You MUST try a different approach."
-        vector_context = "No existing code snippets were found."
+
+        # --- STRATEGIC BYPASS: Do not use vector context if the service is disabled ---
+        vector_context = "Vector context (RAG) is currently disabled."
+        if self.vector_context_service:
+            # This block will be skipped if vector_context_service is None
+            vector_context = "No existing code snippets were found."
+
         file_structure = "\n".join(
             sorted(self.project_manager.get_project_files().keys())) or "The project is currently empty."
 
         available_tools = self.foundry_manager.get_llm_tool_definitions()
-        available_tools = [t for t in available_tools if t.get("name") != "stream_and_write_file"]
+
+        # --- STRATEGIC BYPASS: Remove indexing tool if service is disabled ---
+        if not self.vector_context_service:
+            available_tools = [t for t in available_tools if t.get("name") != "index_project_context"]
 
         prompt = CODER_PROMPT.format(
             current_task=current_task_description, mission_log=mission_log_history,
@@ -295,7 +305,8 @@ class DevelopmentTeamService:
             if "tool_name" not in tool_call or "arguments" not in tool_call:
                 raise ValueError("Response must be JSON with 'tool_name' and 'arguments'.")
         except (ValueError, json.JSONDecodeError) as e:
-            self.log("error", f"Coder agent (tool selection) failed to produce valid JSON. Raw response: {response_str}. Error: {e}")
+            self.log("error",
+                     f"Coder agent (tool selection) failed to produce valid JSON. Raw response: {response_str}. Error: {e}")
             return None
 
         if tool_call.get("tool_name") == "write_file":
