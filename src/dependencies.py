@@ -18,7 +18,10 @@ def get_aura_services(
     user_id = str(current_user.id)
     print(f"✅ Spinning up dedicated Aura services for user: {current_user.email} ({user_id})")
 
-    user_workspace_path = Path(f"workspaces/{user_id}")
+    # --- THIS IS THE FIX ---
+    # This absolute path MUST match your new Railway Volume's Mount Path.
+    persistent_storage_path = Path("/data")
+    user_workspace_path = persistent_storage_path / "workspaces" / user_id
     user_workspace_path.mkdir(parents=True, exist_ok=True)
 
     event_bus = EventBus()
