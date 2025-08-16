@@ -306,10 +306,10 @@ class DevelopmentTeamService:
             available_tools = [t for t in available_tools if t.get("name") != "index_project_context"]
 
         prompt = CODER_PROMPT.format(
-            current_task=current_task_description, mission_log=mission_log_history,
-            available_tools=json.dumps(available_tools, indent=2),
+            current_task=current_task_description,
+            mission_log=mission_log_history,
             file_structure=file_structure,
-            relevant_code_snippets=vector_context, JSON_OUTPUT_RULE=JSON_OUTPUT_RULE.strip()
+            relevant_code_snippets=vector_context
         )
         messages = [{"role": "user", "content": prompt}]
 
