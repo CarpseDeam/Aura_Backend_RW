@@ -75,7 +75,10 @@ class ConductorService:
                         retry_count += 1
                         continue
 
-                    result = await self.tool_runner_service.run_tool_by_dict(tool_call)
+                    # --- THIS IS THE FIX ---
+                    # We must pass the user_id to the tool runner so it knows which user's
+                    # project and services to use for the tool execution.
+                    result = await self.tool_runner_service.run_tool_by_dict(tool_call, user_id=user_id)
                     result_is_error, error_message = self._is_result_an_error(result)
 
                     if not result_is_error:
