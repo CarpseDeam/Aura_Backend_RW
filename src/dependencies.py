@@ -14,10 +14,19 @@ from src.services import (
 from src.foundry import FoundryManager
 from src.core.llm_client import LLMClient
 
+# --- THE FIX: Create a single, shared FoundryManager instance at startup ---
+# This mimics the behavior of the original, working desktop application.
+# The tools are now loaded ONCE and shared across all user requests.
+foundry_manager = FoundryManager()
+
+def get_foundry_manager() -> FoundryManager:
+    """Dependency to provide the shared FoundryManager instance."""
+    return foundry_manager
 
 def get_aura_services(
         current_user: User = Depends(get_current_user),
-        db: Session = Depends(get_db)
+        db: Session = Depends(get_db),
+        fm: FoundryManager = Depends(get_foundry_manager) # Inject the shared instance
 ) -> ServiceManager:
     """
     Dependency that creates and yields a full, user-specific ServiceManager stack.
@@ -37,7 +46,8 @@ def get_aura_services(
     event_bus = EventBus()
     project_manager = ProjectManager(event_bus, workspace_path=str(user_workspace_path))
     llm_client = LLMClient()
-    foundry_manager = FoundryManager()
+    # The FoundryManager is now injected, not created.
+    # foundry_manager = FoundryManager() # <-- THIS WAS THE BUG. IT IS REMOVED.
 
     # --- Initialize services with shared components ---
     mission_log_service = MissionLogService(project_manager, event_bus)
@@ -53,7 +63,7 @@ def get_aura_services(
 
     tool_runner_service = ToolRunnerService(
         event_bus=event_bus,
-        foundry_manager=foundry_manager,
+        foundry_manager=fm, # Use the injected singleton
         project_manager=project_manager,
         mission_log_service=mission_log_service,
         vector_context_service=vector_context_service,
@@ -66,7 +76,7 @@ def get_aura_services(
         project_manager=project_manager,
         mission_log_service=mission_log_service,
         vector_context_service=vector_context_service,
-        foundry_manager=foundry_manager,
+        foundry_manager=fm, # Use the injected singleton
         db_session=db,
         user_id=current_user.id
     )
@@ -83,7 +93,7 @@ def get_aura_services(
     services = ServiceManager(event_bus, project_root=Path("."))
     services.project_manager = project_manager
     services.llm_client = llm_client
-    services.foundry_manager = foundry_manager
+    services.foundry_manager = fm # Use the injected singleton
     services.mission_log_service = mission_log_service
     services.vector_context_service = vector_context_service
     services.tool_runner_service = tool_runner_service
