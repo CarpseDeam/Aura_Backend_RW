@@ -5,7 +5,7 @@ from typing import List, Dict, Any
 
 from src.dependencies import get_aura_services
 from src.core.managers import ServiceManager, ProjectManager
-from src.services import DevelopmentTeamService, ConductorService
+from src.services import DevelopmentTeamService, ConductorService, MissionLogService
 from src.db.models import User
 from src.api.auth import get_current_user
 
@@ -61,6 +61,7 @@ async def generate_agent_plan(
     """
     dev_team: DevelopmentTeamService = aura_services.get_development_team_service()
     project_manager: ProjectManager = aura_services.get_project_manager()
+    mission_log_service: MissionLogService = aura_services.mission_log_service
 
     try:
         project_path = project_manager.load_project(request.project_name)
@@ -69,6 +70,10 @@ async def generate_agent_plan(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Project '{request.project_name}' not found. Cannot generate plan."
             )
+
+        # --- THE FIX: Tell the mission log to load this project's data ---
+        mission_log_service.load_log_for_active_project()
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -98,12 +103,18 @@ async def dispatch_agent_mission(
     """
     conductor: ConductorService = aura_services.conductor_service
     project_manager: ProjectManager = aura_services.get_project_manager()
+    mission_log_service: MissionLogService = aura_services.mission_log_service
+
     project_path = project_manager.load_project(request.project_name)
     if not project_path:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Project '{request.project_name}' not found for this user."
         )
+
+    # --- THE FIX: Tell the mission log to load this project's data ---
+    mission_log_service.load_log_for_active_project()
+
     user_id = str(current_user.id)
     background_tasks.add_task(
         conductor.execute_mission_in_background,
@@ -155,7 +166,7 @@ async def delete_existing_project(
         return None
     except FileNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except ValueError as e: # For safety violations
+    except ValueError as e:  # For safety violations
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to delete project: {e}")
