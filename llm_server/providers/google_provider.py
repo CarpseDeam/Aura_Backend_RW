@@ -96,4 +96,4 @@ class GoogleProvider(BaseProvider):
                 yield json.dumps(full_tool_call)
 
         except Exception as e:
-            yield f"Error: Google API call failed. Details: {e}"
+            raise RuntimeError(f"Google API call failed. Details: {e}")

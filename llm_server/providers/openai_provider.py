@@ -57,6 +57,6 @@ class OpenAIProvider(BaseProvider):
                 yield json.dumps(tool_output)
 
         except openai.APIError as e:
-            yield f"Error: OpenAI API call failed. Status: {e.status_code}. Details: {e.message}"
+            raise RuntimeError(f"OpenAI API call failed. Status: {e.status_code}. Details: {e.message}")
         except Exception as e:
-            yield f"Error: An unexpected error occurred with OpenAI. Details: {e}"
+            raise RuntimeError(f"An unexpected error occurred with OpenAI. Details: {e}")

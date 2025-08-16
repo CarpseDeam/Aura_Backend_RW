@@ -60,6 +60,6 @@ class AnthropicProvider(BaseProvider):
                             yield json.dumps(tool_output)
 
         except anthropic.APIError as e:
-            yield f"Error: Anthropic API call failed. Status: {e.status_code}. Details: {e.message}"
+            raise RuntimeError(f"Anthropic API call failed. Status: {e.status_code}. Details: {e.message}")
         except Exception as e:
-            yield f"Error: An unexpected error occurred with Anthropic. Details: {e}"
+            raise RuntimeError(f"An unexpected error occurred with Anthropic. Details: {e}")
