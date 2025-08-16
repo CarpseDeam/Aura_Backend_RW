@@ -1,6 +1,6 @@
 # src/schemas/model_assignment.py
 """Pydantic schemas for model assignments."""
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Dict, List
 
 
@@ -11,6 +11,9 @@ class AvailableModels(BaseModel):
 
 class ModelAssignment(BaseModel):
     """Represents a single model assignment for a role."""
+    # This configuration tells Pydantic to not issue a warning for field names starting with "model_".
+    model_config = ConfigDict(protected_namespaces=())
+
     role_name: str
     model_id: str
     temperature: float = Field(..., ge=0.0, le=2.0)
