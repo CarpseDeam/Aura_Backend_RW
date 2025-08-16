@@ -1,4 +1,4 @@
-# src/core/managers/service_manager.py
+# src/services/service_manager.py
 from __future__ import annotations
 import sys
 import subprocess
@@ -48,38 +48,41 @@ class ServiceManager:
         self.vector_context_service: VectorContextService = None
 
         self.llm_server_process: Optional[subprocess.Popen] = None
-        self.event_bus.subscribe("project_created", self._on_project_activated)
+
+        # --- THE FIX: This event subscription is the root cause of the double-initialization bug. IT IS REMOVED. ---
+        # self.event_bus.subscribe("project_created", self._on_project_activated)
 
         self.log_to_event_bus("info", "[ServiceManager] Initialized")
 
-    def _on_project_activated(self, event: ProjectCreated):
-        """
-        Initializes or re-initializes services that depend on an active project.
-        """
-        self.log_to_event_bus("info",
-                              f"Project activated: {event.project_name}. Synchronizing project-specific services.")
-        project_path = Path(event.project_path)
+    # --- THE FIX: This entire method was causing services to be re-created incorrectly in a web context. IT IS REMOVED. ---
+    # def _on_project_activated(self, event: ProjectCreated):
+    #     """
+    #     Initializes or re-initializes services that depend on an active project.
+    #     """
+    #     self.log_to_event_bus("info",
+    #                           f"Project activated: {event.project_name}. Synchronizing project-specific services.")
+    #     project_path = Path(event.project_path)
 
-        self.mission_log_service = MissionLogService(self.project_manager, self.event_bus)
-        self.mission_log_service.load_log_for_active_project()
+    #     self.mission_log_service = MissionLogService(self.project_manager, self.event_bus)
+    #     self.mission_log_service.load_log_for_active_project()
 
-        rag_db_path = project_path / ".rag_db"
-        self.vector_context_service = VectorContextService(db_path=str(rag_db_path), user_db_session=self.db,
-                                                           user_id=self.user_id)
+    #     rag_db_path = project_path / ".rag_db"
+    #     self.vector_context_service = VectorContextService(db_path=str(rag_db_path), user_db_session=self.db,
+    #                                                        user_id=self.user_id)
 
-        self._initialize_tool_runner()
+    #     self._initialize_tool_runner()
 
-        if self.conductor_service:
-            self.conductor_service.tool_runner_service = self.tool_runner_service
-            self.conductor_service.mission_log_service = self.mission_log_service
-            self.log_to_event_bus("info", "ConductorService references updated.")
+    #     if self.conductor_service:
+    #         self.conductor_service.tool_runner_service = self.tool_runner_service
+    #         self.conductor_service.mission_log_service = self.mission_log_service
+    #         self.log_to_event_bus("info", "ConductorService references updated.")
 
-        if self.development_team_service:
-            self.development_team_service.vector_context_service = self.vector_context_service
-            self.development_team_service.mission_log_service = self.mission_log_service
-            self.log_to_event_bus("info", "DevelopmentTeamService references updated.")
+    #     if self.development_team_service:
+    #         self.development_team_service.vector_context_service = self.vector_context_service
+    #         self.development_team_service.mission_log_service = self.mission_log_service
+    #         self.log_to_event_bus("info", "DevelopmentTeamService references updated.")
 
-        self.log_to_event_bus("success", "Project-specific services synchronized.")
+    #     self.log_to_event_bus("success", "Project-specific services synchronized.")
 
     def log_to_event_bus(self, level: str, message: str):
         self.event_bus.emit("log_message_received", "ServiceManager", level, message)
