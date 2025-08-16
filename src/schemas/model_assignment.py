@@ -12,7 +12,7 @@ class AvailableModels(BaseModel):
 class ModelAssignment(BaseModel):
     """Represents a single model assignment for a role."""
     role_name: str
-    model_identifier: str
+    model_id: str
     temperature: float = Field(..., ge=0.0, le=2.0)
 
     class Config:

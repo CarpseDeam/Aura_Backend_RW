@@ -95,14 +95,14 @@ def create_or_update_assignments_for_user(db: Session, user_id: int, assignments
         if role_name in existing_assignments:
             # Update existing assignment
             db_assignment = existing_assignments[role_name]
-            db_assignment.model_identifier = assignment_in.model_identifier
+            db_assignment.model_id = assignment_in.model_id
             db_assignment.temperature = assignment_in.temperature
         else:
             # Create new assignment
             new_assignment = models.ModelAssignment(
                 user_id=user_id,
                 role_name=role_name,
-                model_identifier=assignment_in.model_identifier,
+                model_id=assignment_in.model_id,
                 temperature=assignment_in.temperature
             )
             db.add(new_assignment)
