@@ -11,7 +11,7 @@ from src.api.auth import get_current_user
 from src.db.database import SessionLocal
 
 
-# --- NEW: Wrapper for the planner background task ---
+# --- Wrapper for the planner background task ---
 async def run_planner_task_wrapper(
         dev_team_service: DevelopmentTeamService, user_id: int, user_idea: str, history: List[Dict[str, Any]]
 ):
