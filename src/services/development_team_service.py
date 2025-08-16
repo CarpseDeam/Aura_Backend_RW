@@ -1,5 +1,7 @@
 # src/services/development_team_service.py
 from __future__ import annotations
+
+import asyncio
 import json
 import re
 import os
@@ -90,21 +92,41 @@ class DevelopmentTeamService:
                 invoke_url = f"{self.llm_server_url}/invoke"
                 async with session.post(invoke_url, json=payload, headers=headers, timeout=300) as response:
                     if response.status == 200:
-                        # Find the final JSON object in the streaming response
-                        async for line in response.content:
-                            if line:
+                        # --- THE REAL FIX: This logic was completely broken for reading the streaming response ---
+                        # It was only looking for the *last* line, but if an error happened mid-stream,
+                        # it would fail silently. We need to read the whole body.
+                        full_body = await response.text()
+
+                        # The response is a newline-delimited JSON stream. The last valid JSON object contains the final result.
+                        last_valid_json = None
+                        for line in full_body.strip().split('\n'):
+                            try:
                                 data = json.loads(line)
-                                if "final_response" in data:
-                                    return data["final_response"].get("reply",
-                                                                      "Error: Invalid response from LLM service.")
-                        return "Error: Stream ended without a final response object."
+                                if "error" in data:
+                                    # If the stream itself reports an error, that's our result.
+                                    self.log("error", f"LLM service stream returned an error: {data['error']}")
+                                    return f"Error from LLM service: {data['error']}"
+                                last_valid_json = data
+                            except json.JSONDecodeError:
+                                # Ignore lines that aren't valid JSON
+                                continue
+
+                        if last_valid_json and "final_response" in last_valid_json:
+                            return last_valid_json["final_response"].get("reply",
+                                                                         "Error: 'reply' key missing from final LLM response.")
+                        else:
+                            self.log("error", f"LLM call succeeded but response was malformed. Full body: {full_body}")
+                            return f"Error: LLM call succeeded but the final response was malformed."
                     else:
                         error_detail = await response.text()
                         self.log("error", f"LLM service returned error {response.status}: {error_detail}")
                         return f"Error: The AI microservice failed to process the request. Status: {response.status}. Details: {error_detail}"
-        except aiohttp.ClientError as e:
+        except aiohttp.ClientConnectorError as e:
             self.log("error", f"Could not connect to LLM service at {self.llm_server_url}. Error: {e}")
             return f"Error: Could not connect to the AI microservice. Please ensure it is running and the URL is correct."
+        except asyncio.TimeoutError:
+            self.log("error", f"Request to LLM service at {self.llm_server_url} timed out.")
+            return "Error: The request to the AI microservice timed out."
         except Exception as e:
             self.log("error", f"An unexpected error occurred while calling the LLM service: {e}")
             return f"An unexpected error occurred while calling the AI microservice: {e}"
