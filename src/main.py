@@ -18,6 +18,7 @@ app = FastAPI(
 # --- CORS Middleware ---
 # This allows your Vercel frontend to talk to your Railway backend
 origins = [
+    "https://snowballannotation.com",  # <-- THIS IS THE CRITICAL FIX
     "https://aura-frontend-two.vercel.app",
     "http://localhost",
     "http://localhost:8080",
