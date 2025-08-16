@@ -39,31 +39,19 @@ def get_aura_services(
     persistent_storage_path = Path("/data")
     user_workspace_path = persistent_storage_path / "workspaces" / user_id
 
-    # THIS IS THE FIX: Using os.makedirs for maximum reliability.
-    # This command creates the entire directory path if it doesn't exist.
     os.makedirs(user_workspace_path, exist_ok=True)
 
     event_bus = EventBus()
     project_manager = ProjectManager(event_bus, workspace_path=str(user_workspace_path))
     llm_client = LLMClient()
-    # The FoundryManager is now injected, not created.
-    # foundry_manager = FoundryManager() # <-- THIS WAS THE BUG. IT IS REMOVED.
 
     # --- Initialize services with shared components ---
     mission_log_service = MissionLogService(project_manager, event_bus)
-
-    # --- STRATEGIC BYPASS: Temporarily disable VectorContextService ---
     vector_context_service = None
-    # rag_db_path = user_workspace_path / ".rag_db"
-    # vector_context_service = VectorContextService(
-    #     db_path=str(rag_db_path),
-    #     user_db_session=db,
-    #     user_id=current_user.id
-    # )
 
     tool_runner_service = ToolRunnerService(
         event_bus=event_bus,
-        foundry_manager=fm, # Use the injected singleton
+        foundry_manager=fm,
         project_manager=project_manager,
         mission_log_service=mission_log_service,
         vector_context_service=vector_context_service,
@@ -76,24 +64,27 @@ def get_aura_services(
         project_manager=project_manager,
         mission_log_service=mission_log_service,
         vector_context_service=vector_context_service,
-        foundry_manager=fm, # Use the injected singleton
+        foundry_manager=fm,
         db_session=db,
         user_id=current_user.id
     )
 
+    # --- THE NEW ARCHITECTURE: The Conductor is now the primary brain ---
     conductor_service = ConductorService(
         event_bus=event_bus,
         mission_log_service=mission_log_service,
         tool_runner_service=tool_runner_service,
-        development_team_service=development_team_service
+        development_team_service=development_team_service,
+        foundry_manager=fm,
+        llm_client=llm_client,
+        db_session=db
     )
 
     # --- Assemble the master ServiceManager ---
-    # This is now just a container for the already-initialized services.
     services = ServiceManager(event_bus, project_root=Path("."))
     services.project_manager = project_manager
     services.llm_client = llm_client
-    services.foundry_manager = fm # Use the injected singleton
+    services.foundry_manager = fm
     services.mission_log_service = mission_log_service
     services.vector_context_service = vector_context_service
     services.tool_runner_service = tool_runner_service
