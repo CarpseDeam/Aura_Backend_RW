@@ -125,10 +125,11 @@ class DevelopmentTeamService:
         self.log("info", f"Aura planner workflow initiated for user {user_id}: '{user_idea[:50]}...'")
         prompt = AURA_PLANNER_PROMPT.format(
             SENIOR_ARCHITECT_HEURISTIC_RULE=SENIOR_ARCHITECT_HEURISTIC_RULE.strip(),
-            conversation_history="\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history]),
             user_idea=user_idea
         )
-        messages = conversation_history + [{"role": "user", "content": prompt}]
+        # The planner should be stateless and not receive the full chat history.
+        # It acts only on the final, confirmed user idea.
+        messages = [{"role": "user", "content": prompt}]
 
         response_str = await self._make_llm_call(int(user_id), "planner", messages, is_json=True)
 
