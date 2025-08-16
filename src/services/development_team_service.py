@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Any
 from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
 from src.prompts.creative import AURA_PLANNER_PROMPT, AURA_REPLANNER_PROMPT, AURA_MISSION_SUMMARY_PROMPT
-from src.prompts.coder import CODER_PROMPT
-from src.prompts.master_rules import JSON_OUTPUT_RULE, SENIOR_ARCHITECT_HEURISTIC_RULE
+from src.prompts.coder import CODER_PROMPT, CODER_PROMPT_STREAMING
+from src.prompts.master_rules import JSON_OUTPUT_RULE, SENIOR_ARCHITECT_HEURISTIC_RULE, TYPE_HINTING_RULE, DOCSTRING_RULE, CLEAN_CODE_RULE
 from src.prompts.companion import COMPANION_PROMPT
 from src.db import crud
 
@@ -118,16 +118,14 @@ class DevelopmentTeamService:
     async def run_aura_planner_workflow(self, user_id: str, user_idea: str, conversation_history: list):
         self.log("info", f"Aura planner workflow initiated for user {user_id}: '{user_idea[:50]}...'")
 
-        # This is the fix: The conversation history is now passed to the prompt.
         history_str = "\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history])
 
         prompt = AURA_PLANNER_PROMPT.format(
             SENIOR_ARCHITECT_HEURISTIC_RULE=SENIOR_ARCHITECT_HEURISTIC_RULE.strip(),
             conversation_history=history_str,
-            user_idea=user_idea  # The final prompt is still the trigger
+            user_idea=user_idea
         )
 
-        # The planner now gets the full context.
         messages = [{"role": "user", "content": prompt}]
 
         response_str = await self._make_llm_call(int(user_id), "planner", messages, is_json=True)
@@ -149,11 +147,46 @@ class DevelopmentTeamService:
             await self.handle_error(user_id, "Aura", f"Failed to create a valid plan: {e}.")
             self.log("error", f"Aura planner failure for user {user_id}. Raw response: {response_str}")
 
+    async def _generate_code_for_task(self, user_id: str, path: str, task_description: str) -> str:
+        """
+        A dedicated method to invoke the Coder AI to generate code for a file.
+        This is the second step in the new code writing workflow.
+        """
+        self.log("info", f"Generating code for '{path}'...")
+        file_tree = "\n".join(
+            sorted(list(self.project_manager.get_project_files().keys()))) or "The project is currently empty."
+
+        prompt = CODER_PROMPT_STREAMING.format(
+            path=path,
+            task_description=task_description,
+            file_tree=file_tree,
+            TYPE_HINTING_RULE=TYPE_HINTING_RULE.strip(),
+            DOCSTRING_RULE=DOCSTRING_RULE.strip(),
+            CLEAN_CODE_RULE=CLEAN_CODE_RULE.strip()
+        )
+        messages = [{"role": "user", "content": prompt}]
+
+        generated_code = await self._make_llm_call(int(user_id), "coder", messages)
+
+        if generated_code.startswith("Error:"):
+            return generated_code
+
+        code_block_regex = re.compile(r'```(?:python)?\n(.*?)\n```', re.DOTALL)
+        match = code_block_regex.search(generated_code)
+        if match:
+            return match.group(1).strip()
+        return generated_code.strip()
+
     async def run_coding_task(self, user_id: str, task: Dict[str, any], last_error: Optional[str] = None) -> Optional[
         Dict[str, str]]:
+        """
+        Translates a high-level task into a final, executable tool call.
+        This now includes a two-step process for code generation.
+        """
         if task.get("tool_call"):
             self.log("info", f"Using pre-defined tool call for task: {task['description']}")
             return task["tool_call"]
+
         current_task_description = task['description']
         log_tasks = self.mission_log_service.get_tasks()
         mission_log_history = "\n".join(
@@ -167,6 +200,7 @@ class DevelopmentTeamService:
             sorted(self.project_manager.get_project_files().keys())) or "The project is currently empty."
 
         available_tools = self.foundry_manager.get_llm_tool_definitions()
+        available_tools = [t for t in available_tools if t.get("name") != "stream_and_write_file"]
 
         prompt = CODER_PROMPT.format(
             current_task=current_task_description, mission_log=mission_log_history,
@@ -179,17 +213,38 @@ class DevelopmentTeamService:
         response_str = await self._make_llm_call(int(user_id), "coder", messages, is_json=True, tools=available_tools)
 
         if response_str.startswith("Error:"):
-            self.log("error", f"Coder generation failure. Details: {response_str}")
+            self.log("error", f"Coder agent (tool selection) failed. Details: {response_str}")
             return None
 
         try:
             tool_call = self._parse_json_response(response_str)
             if "tool_name" not in tool_call or "arguments" not in tool_call:
                 raise ValueError("Response must be JSON with 'tool_name' and 'arguments'.")
-            return tool_call
         except (ValueError, json.JSONDecodeError) as e:
-            self.log("error", f"Coder generation failure. Raw response: {response_str}. Error: {e}")
+            self.log("error", f"Coder agent (tool selection) failed to produce valid JSON. Raw response: {response_str}. Error: {e}")
             return None
+
+        if tool_call.get("tool_name") == "write_file":
+            args = tool_call.get("arguments", {})
+            content = args.get("content")
+            task_desc_for_coding = args.get("task_description")
+
+            if not content and task_desc_for_coding:
+                self.log("info", f"Intercepted `write_file` call. Generating code for '{args.get('path')}'...")
+                generated_code = await self._generate_code_for_task(user_id, args.get("path"), task_desc_for_coding)
+
+                if generated_code.startswith("Error:"):
+                    self.log("error", f"Code generation failed. Details: {generated_code}")
+                    return None
+
+                tool_call["arguments"]["content"] = generated_code
+                tool_call["arguments"].pop("task_description", None)
+            elif not content and not task_desc_for_coding:
+                error_msg = "Coder agent called `write_file` without `content` or `task_description`."
+                self.log("error", error_msg)
+                return None
+
+        return tool_call
 
     async def run_strategic_replan(self, user_id: str, original_goal: str, failed_task: Dict, mission_log: List[Dict]):
         self.log("info", "Strategic re-plan initiated.")

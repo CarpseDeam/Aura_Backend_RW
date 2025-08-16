@@ -38,7 +38,13 @@ class ConductorService:
     async def execute_mission_in_background(self, user_id: str):
         self.is_mission_active = True
         self.original_user_goal = self.mission_log_service.get_initial_goal()
-        await self.execute_mission(user_id)
+        try:
+            await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "thinking"}, user_id)
+            await self.execute_mission(user_id)
+        finally:
+            self.is_mission_active = False
+            await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "idle"}, user_id)
+            self.log("info", f"Conductor finished mission for user {user_id}.")
 
     async def execute_mission(self, user_id: str):
         """
@@ -75,9 +81,6 @@ class ConductorService:
                         retry_count += 1
                         continue
 
-                    # --- THIS IS THE FIX ---
-                    # We must pass the user_id to the tool runner so it knows which user's
-                    # project and services to use for the tool execution.
                     result = await self.tool_runner_service.run_tool_by_dict(tool_call, user_id=user_id)
                     result_is_error, error_message = self._is_result_an_error(result)
 
@@ -104,8 +107,8 @@ class ConductorService:
             await self._post_chat_message(user_id, "Aura", f"A critical error stopped the mission: {e}", is_error=True)
             await websocket_manager.broadcast_to_user({"type": "mission_failure", "content": str(e)}, user_id)
         finally:
-            self.is_mission_active = False
-            self.log("info", f"Conductor finished cycle for user {user_id}.")
+            self.log("info", f"Conductor finished inner execution loop for user {user_id}.")
+
 
     def _is_result_an_error(self, result: any) -> (bool, Optional[str]):
         if isinstance(result, str) and result.strip().lower().startswith("error"):

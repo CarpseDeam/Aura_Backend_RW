@@ -6,7 +6,10 @@ from .master_rules import JSON_OUTPUT_RULE, CLEAN_CODE_RULE, DOCSTRING_RULE, TYP
 CODER_PROMPT = textwrap.dedent("""
     You are an expert programmer and tool-use agent. Your current, specific task is to translate a human-readable instruction into a single, precise JSON tool call. You must choose the single best tool to accomplish the task.
 
-    **CRITICAL RULE:** For any task that involves writing new code, you **MUST** use the `stream_and_write_file` tool. Do not use the older `write_file` tool for AI code generation.
+    **CRITICAL WORKFLOW FOR WRITING CODE:**
+    1. For any task that involves writing new code or modifying existing code, you **MUST** use the `write_file` tool.
+    2. When using `write_file` for AI-generated code, you **MUST** provide a detailed `task_description` argument.
+    3. You **MUST NOT** provide the `content` argument yourself. The system will use your `task_description` to generate the code and will fill in the `content` argument for you.
 
     **CONTEXT BUNDLE:**
 
@@ -37,7 +40,7 @@ CODER_PROMPT = textwrap.dedent("""
 
     1.  **LEARN FROM HISTORY:** Analyze the MISSION LOG. If a previous step failed, you MUST try a different tool or a different approach to make forward progress. Do NOT repeat a failed action.
     2.  **CHOOSE ONE TOOL:** You must analyze the CURRENT TASK and choose the single most appropriate tool from the AVAILABLE TOOLS list.
-    3.  **PROVIDE ARGUMENTS:** You must provide all required arguments for the chosen tool. The `task_description` for `stream_and_write_file` must be a complete and detailed instruction for the coding AI.
+    3.  **PROVIDE ARGUMENTS:** You must provide all required arguments for the chosen tool, following the CRITICAL WORKFLOW FOR WRITING CODE. The `task_description` must be a complete and detailed instruction for the coding AI.
     4.  **STRICT JSON OUTPUT:** Your entire response MUST be a single JSON object representing the tool call.
 
     {JSON_OUTPUT_RULE}
@@ -45,7 +48,7 @@ CODER_PROMPT = textwrap.dedent("""
     **EXAMPLE OF A CORRECT RESPONSE (for generating a file):**
     ```json
     {{
-      "tool_name": "stream_and_write_file",
+      "tool_name": "write_file",
       "arguments": {{
         "path": "src/main.py",
         "task_description": "Create a simple Python script that defines a main function to print 'Hello, World!' and executes it under an `if __name__ == '__main__':` block."
@@ -57,8 +60,7 @@ CODER_PROMPT = textwrap.dedent("""
     """)
 
 
-# This prompt is used INSIDE the stream_and_write_file action.
-# It's a pure code generation prompt.
+# This prompt is now used by the DevelopmentTeamService itself.
 CODER_PROMPT_STREAMING = textwrap.dedent("""
     You are an expert Python programmer at a world-class software company. Your sole task is to generate the complete, production-ready source code for a single file based on the provided instructions. Your code must be clean, robust, and maintainable.
 
@@ -77,7 +79,7 @@ CODER_PROMPT_STREAMING = textwrap.dedent("""
     2.  {DOCSTRING_RULE}
     3.  {CLEAN_CODE_RULE}
     4.  **CORRECT REFERENCING:** When importing from another file within this project, the path MUST start from the project's source root (e.g., `src`), not a generic name. Example: `from models.user import User` if both are in `src`.
-    5.  {RAW_CODE_OUTPUT_RULE}
+    5.  **RAW CODE OUTPUT ONLY**: Your entire response MUST be only the raw Python code for the assigned file. Do not write any explanations, comments, or markdown before or after the code.
 
     Now, generate the complete, professional-grade code for the file `{path}`.
     """)
