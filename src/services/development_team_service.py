@@ -5,6 +5,7 @@ import re
 import os
 import aiohttp
 from typing import TYPE_CHECKING, Dict, List, Optional, Any
+from sqlalchemy.orm import Session
 
 from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
@@ -15,7 +16,10 @@ from src.prompts.companion import COMPANION_PROMPT
 from src.db import crud
 
 if TYPE_CHECKING:
-    from src.core.managers import ServiceManager
+    from src.core.managers import ServiceManager, ProjectManager
+    from src.services import MissionLogService, VectorContextService
+    from src.foundry import FoundryManager
+    from src.core.llm_client import LLMClient
 
 
 class DevelopmentTeamService:
@@ -25,18 +29,28 @@ class DevelopmentTeamService:
     This version now calls a dedicated, external LLM microservice.
     """
 
-    def __init__(self, event_bus: EventBus, service_manager: "ServiceManager"):
+    def __init__(
+        self,
+        event_bus: EventBus,
+        llm_client: "LLMClient",
+        project_manager: "ProjectManager",
+        mission_log_service: "MissionLogService",
+        vector_context_service: "VectorContextService",
+        foundry_manager: "FoundryManager",
+        db_session: Session,
+        user_id: int
+    ):
         self.event_bus = event_bus
-        self.service_manager = service_manager
-        self.llm_client = service_manager.get_llm_client()
-        self.project_manager = service_manager.project_manager
-        self.mission_log_service = service_manager.mission_log_service
-        self.vector_context_service = service_manager.vector_context_service
-        self.foundry_manager = service_manager.get_foundry_manager()
-        self.db = service_manager.db
-        self.llm_server_url = os.getenv("LLM_SERVER_URL")  # Get the microservice URL from env vars
+        self.llm_client = llm_client
+        self.project_manager = project_manager
+        self.mission_log_service = mission_log_service
+        self.vector_context_service = vector_context_service
+        self.foundry_manager = foundry_manager
+        self.db = db_session
+        self.user_id = user_id
+        self.llm_server_url = os.getenv("LLM_SERVER_URL")
 
-        assignments_from_db = crud.get_assignments_for_user(self.db, user_id=self.service_manager.user_id)
+        assignments_from_db = crud.get_assignments_for_user(self.db, user_id=self.user_id)
         self.llm_client.set_assignments({a.role_name: a.model_identifier for a in assignments_from_db})
         self.llm_client.set_temperatures({a.role_name: a.temperature for a in assignments_from_db})
 

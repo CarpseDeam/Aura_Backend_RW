@@ -1,6 +1,6 @@
 # src/providers/openai_provider.py
 import openai
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, AsyncGenerator
 import json
 from .base_provider import BaseProvider
 
@@ -10,40 +10,53 @@ class OpenAIProvider(BaseProvider):
         super().__init__(api_key)
         self.client = openai.AsyncOpenAI(api_key=self.api_key)
 
-    async def get_chat_response(self, model_name: str, messages: List[Dict[str, Any]], temperature: float,
-                                is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> str:
+    async def get_chat_response_stream(self, model_name: str, messages: List[Dict[str, Any]], temperature: float,
+                                       is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> AsyncGenerator[str, None]:
         try:
             kwargs = {
                 "model": model_name,
                 "messages": messages,
                 "temperature": temperature,
+                "stream": True, # Enable streaming
             }
-            # Add tools to the request if they are provided
             if tools:
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = "auto"
             else:
-                # Use JSON mode only if no tools are present
                 if is_json:
                     kwargs["response_format"] = {"type": "json_object"}
 
-            response = await self.client.chat.completions.create(**kwargs)
+            stream = await self.client.chat.completions.create(**kwargs)
 
-            response_message = response.choices[0].message
+            tool_call_aggregator = {}
+            async for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta:
+                    delta = chunk.choices[0].delta
+                    if delta.tool_calls:
+                        # Aggregate tool call chunks
+                        for tool_call_chunk in delta.tool_calls:
+                            index = tool_call_chunk.index
+                            if index not in tool_call_aggregator:
+                                tool_call_aggregator[index] = {"name": "", "arguments": ""}
+                            if tool_call_chunk.function.name:
+                                tool_call_aggregator[index]["name"] += tool_call_chunk.function.name
+                            if tool_call_chunk.function.arguments:
+                                tool_call_aggregator[index]["arguments"] += tool_call_chunk.function.arguments
+                    elif delta.content:
+                        # Yield content chunks directly
+                        yield delta.content
 
-            # Check for a tool call in the response
-            if response_message.tool_calls:
-                tool_call = response_message.tool_calls[0]
+            # After the stream, process any aggregated tool calls
+            if tool_call_aggregator:
+                # For simplicity, we process the first tool call
+                first_tool_call = tool_call_aggregator[0]
                 tool_output = {
-                    "tool_name": tool_call.function.name,
-                    "arguments": json.loads(tool_call.function.arguments)
+                    "tool_name": first_tool_call["name"],
+                    "arguments": json.loads(first_tool_call["arguments"])
                 }
-                return json.dumps(tool_output)
+                yield json.dumps(tool_output)
 
-            # Fallback to text content if no tool call
-            content = response_message.content
-            return content if content else "Error: OpenAI API returned an empty response."
         except openai.APIError as e:
-            return f"Error: OpenAI API call failed. Status: {e.status_code}. Details: {e.message}"
+            yield f"Error: OpenAI API call failed. Status: {e.status_code}. Details: {e.message}"
         except Exception as e:
-            return f"Error: An unexpected error occurred with OpenAI. Details: {e}"
+            yield f"Error: An unexpected error occurred with OpenAI. Details: {e}"

@@ -1,6 +1,6 @@
 # llm_server/providers/google_provider.py
 import google.generativeai as genai
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, AsyncGenerator
 import json
 import copy
 from .base_provider import BaseProvider
@@ -15,10 +15,6 @@ class GoogleProvider(BaseProvider):
             raise ValueError(f"Failed to configure Google AI: {e}")
 
     def _uppercase_schema_types(self, schema: Any) -> Any:
-        """
-        Recursively traverses a JSON schema dict and uppercases 'type' values
-        for Gemini compatibility.
-        """
         if isinstance(schema, dict):
             new_dict = {}
             for key, value in schema.items():
@@ -32,20 +28,21 @@ class GoogleProvider(BaseProvider):
         return schema
 
     def transform_tools_for_provider(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Transforms the tool schema to meet Gemini's specific requirements (uppercase types)."""
         if not tools:
             return []
-
         transformed_tools = []
         for tool in tools:
             tool_copy = copy.deepcopy(tool)
-            if 'parameters' in tool_copy:
-                tool_copy['parameters'] = self._uppercase_schema_types(tool_copy['parameters'])
+            if 'function_declarations' in tool_copy:
+                for func in tool_copy['function_declarations']:
+                    if 'parameters' in func:
+                        func['parameters'] = self._uppercase_schema_types(func['parameters'])
             transformed_tools.append(tool_copy)
         return transformed_tools
 
-    async def get_chat_response(self, model_name: str, messages: List[Dict[str, Any]], temperature: float,
-                                is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> str:
+    async def get_chat_response_stream(self, model_name: str, messages: List[Dict[str, Any]], temperature: float,
+                                       is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> \
+    AsyncGenerator[str, None]:
         try:
             system_prompt = None
             conversation_messages = []
@@ -59,23 +56,11 @@ class GoogleProvider(BaseProvider):
             for msg in conversation_messages:
                 role = msg.get("role")
                 content = msg.get("content")
-
-                if not (role and content):
-                    continue
-
-                if role == "assistant":
-                    role = "model"
-
-                if role == "system":
-                    continue
-
-                if role not in ["user", "model"]:
-                    role = "user"
-
-                prepared_messages.append({
-                    "role": role,
-                    "parts": [{"text": content}]
-                })
+                if not (role and content): continue
+                if role == "assistant": role = "model"
+                if role == "system": continue
+                if role not in ["user", "model"]: role = "user"
+                prepared_messages.append({"role": role, "parts": [{"text": content}]})
 
             model = genai.GenerativeModel(
                 model_name,
@@ -89,27 +74,26 @@ class GoogleProvider(BaseProvider):
 
             response = await model.generate_content_async(
                 contents=prepared_messages,
-                generation_config=generation_config
+                generation_config=generation_config,
+                stream=True  # Enable streaming
             )
 
-            if response.candidates and response.candidates[0].content.parts:
-                part = response.candidates[0].content.parts[0]
-                if part.function_call:
-                    tool_call = {
-                        "tool_name": part.function_call.name,
-                        "arguments": dict(part.function_call.args)
-                    }
-                    return json.dumps(tool_call)
+            full_tool_call = None
+            async for chunk in response:
+                if chunk.candidates and chunk.candidates[0].content.parts:
+                    part = chunk.candidates[0].content.parts[0]
+                    if part.function_call:
+                        # Gemini sends the full tool call in one chunk
+                        full_tool_call = {
+                            "tool_name": part.function_call.name,
+                            "arguments": dict(part.function_call.args)
+                        }
+                        break
+                    elif hasattr(part, 'text'):
+                        yield part.text
 
-            if response.text:
-                return response.text
-
-            try:
-                finish_reason = response.candidates[0].finish_reason.name if response.candidates else "UNKNOWN"
-                safety_ratings = response.prompt_feedback.safety_ratings if response.prompt_feedback else "UNKNOWN"
-                return f"Error: Google API returned an empty response. Finish reason: {finish_reason}. Safety ratings: {safety_ratings}"
-            except (IndexError, AttributeError):
-                return "Error: Google API returned an empty or invalid response."
+            if full_tool_call:
+                yield json.dumps(full_tool_call)
 
         except Exception as e:
-            return f"Error: Google API call failed. Details: {e}"
+            yield f"Error: Google API call failed. Details: {e}"
