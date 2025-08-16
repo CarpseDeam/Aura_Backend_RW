@@ -18,6 +18,7 @@ router = APIRouter(
 class GenerateRequest(BaseModel):
     prompt: str
     project_name: str
+    history: List[Dict[str, Any]]
 
 
 class DispatchRequest(BaseModel):
@@ -79,7 +80,7 @@ async def generate_agent_plan(
         dev_team.run_aura_planner_workflow,
         user_id=user_id,
         user_idea=request.prompt,
-        conversation_history=[]
+        conversation_history=request.history
     )
 
     return {"message": "Aura has received your request and is formulating a plan."}
