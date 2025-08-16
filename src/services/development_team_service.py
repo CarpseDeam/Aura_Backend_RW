@@ -92,9 +92,6 @@ class DevelopmentTeamService:
                 invoke_url = f"{self.llm_server_url}/invoke"
                 async with session.post(invoke_url, json=payload, headers=headers, timeout=300) as response:
                     if response.status == 200:
-                        # --- THE REAL FIX: This logic was completely broken for reading the streaming response ---
-                        # It was only looking for the *last* line, but if an error happened mid-stream,
-                        # it would fail silently. We need to read the whole body.
                         full_body = await response.text()
 
                         # The response is a newline-delimited JSON stream. The last valid JSON object contains the final result.
