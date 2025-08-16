@@ -167,6 +167,25 @@ class DevelopmentTeamService:
                 raise ValueError(f"No JSON object found in the response. Raw response: {response}")
             return json.loads(match.group(0))
 
+    async def run_companion_chat(self, user_id: str, user_prompt: str, conversation_history: list) -> str:
+        self.log("info", f"Companion chat initiated for user {user_id}: '{user_prompt[:50]}...'")
+        history_str = "\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history])
+
+        prompt = COMPANION_PROMPT.format(
+            conversation_history=history_str,
+            user_prompt=user_prompt
+        )
+
+        messages = [{"role": "user", "content": prompt}]
+
+        response_str = await self._make_llm_call(int(user_id), "chat", messages, is_json=False)
+
+        if response_str.startswith("Error:"):
+            await self.handle_error(user_id, "Companion", response_str)
+            return "I'm sorry, I seem to be having trouble connecting to my creative core right now."
+
+        return response_str
+
     async def run_aura_planner_workflow(self, user_id: str, user_idea: str, conversation_history: list):
         self.log("info", f"Aura planner workflow initiated for user {user_id}: '{user_idea[:50]}...'")
         history_str = "\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history])
@@ -206,8 +225,6 @@ class DevelopmentTeamService:
 
     async def run_strategic_replan(self, user_id: str, original_goal: str, failed_task: Dict, mission_log: List[Dict]):
         self.log("info", "Strategic re-plan initiated.")
-        # THE FIX: This line is removed. The Conductor is now responsible for this message.
-        # await self._post_chat_message(user_id, "Aura", "Hitting a roadblock. Rethinking the plan...")
         mission_log_str = "\n".join(
             [f"- ID {t['id']} ({'Done' if t['done'] else 'Pending'}): {t['description']}" for t in mission_log])
         failed_task_str = f"ID {failed_task['id']}: {failed_task['description']}"
