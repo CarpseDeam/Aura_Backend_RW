@@ -6,6 +6,7 @@ import inspect
 import asyncio
 import copy
 
+from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
 from src.foundry import FoundryManager, BlueprintInvocation
 from .mission_log_service import MissionLogService
@@ -45,6 +46,11 @@ class ToolRunnerService:
         self.llm_client = llm_client
 
         self.PATH_PARAM_KEYS = ['path', 'source_path', 'destination_path', 'requirements_path']
+        self.FILESYSTEM_TOOLS = [
+            'write_file', 'append_to_file', 'create_directory', 'create_package_init',
+            'delete_directory', 'copy_file', 'move_file', 'delete_file',
+            'add_dependency_to_requirements'
+        ]
         logger.info("ToolRunnerService initialized.")
 
     def _get_service_map(self):
@@ -61,7 +67,7 @@ class ToolRunnerService:
             'event_bus': self.event_bus,
         }
 
-    async def run_tool_by_dict(self, tool_call_dict: dict) -> Optional[Any]:
+    async def run_tool_by_dict(self, tool_call_dict: dict, user_id: str) -> Optional[Any]:
         """Convenience method to run a tool from a dictionary."""
         tool_name = tool_call_dict.get("tool_name")
         blueprint = self.foundry_manager.get_blueprint(tool_name)
@@ -71,9 +77,9 @@ class ToolRunnerService:
             return error_msg
 
         invocation = BlueprintInvocation(blueprint=blueprint, parameters=tool_call_dict.get('arguments', {}))
-        return await self.run_tool(invocation)
+        return await self.run_tool(invocation, user_id)
 
-    async def run_tool(self, invocation: BlueprintInvocation) -> Optional[Any]:
+    async def run_tool(self, invocation: BlueprintInvocation, user_id: str) -> Optional[Any]:
         """Executes a single blueprint invocation."""
         blueprint = invocation.blueprint
         action_id = blueprint.id
@@ -89,11 +95,12 @@ class ToolRunnerService:
 
         print(f"▶️  Executing: {action_id} with params {display_params}")
 
-        widget_id = id(invocation)
-        self.event_bus.emit(
-            "tool_call_initiated",
-            ToolCallInitiated(widget_id, action_id, display_params)
-        )
+        # Frontend doesn't have widgets, so we use websockets directly
+        # widget_id = id(invocation)
+        # self.event_bus.emit(
+        #     "tool_call_initiated",
+        #     ToolCallInitiated(widget_id, action_id, display_params)
+        # )
         await asyncio.sleep(0.1)
 
         result = None
@@ -104,17 +111,20 @@ class ToolRunnerService:
             else:
                 result = action_function(**execution_params)
 
-            # --- *** THE FIX IS HERE: INTELLIGENT STATUS CHECKING *** ---
             if isinstance(result, str) and result.strip().lower().startswith("error"):
                 status = "FAILURE"
             elif isinstance(result, dict) and result.get('status') in ["failure", "error"]:
                 status = "FAILURE"
             else:
                 status = "SUCCESS"
-            # --- END OF FIX ---
 
-            if status == "SUCCESS":
-                self.event_bus.emit("refresh_file_tree", RefreshFileTree())
+            if status == "SUCCESS" and action_id in self.FILESYSTEM_TOOLS:
+                # THE FIX: Proactively notify the frontend about the change.
+                file_tree = self.project_manager.get_file_tree()
+                await websocket_manager.broadcast_to_user({
+                    "type": "file_tree_updated",
+                    "content": file_tree
+                }, user_id)
 
             print(f"✅ Result from {action_id}: {result}")
             return result
@@ -125,10 +135,12 @@ class ToolRunnerService:
             print(result)
             return result
         finally:
-            self.event_bus.emit(
-                "tool_call_completed",
-                ToolCallCompleted(widget_id, status, str(result))
-            )
+            # Frontend doesn't have widgets, so we can comment this out
+            # self.event_bus.emit(
+            #     "tool_call_completed",
+            #     ToolCallCompleted(widget_id, status, str(result))
+            # )
+            pass
 
     def _prepare_parameters(self, action_function: callable, action_params: dict) -> dict:
         """
