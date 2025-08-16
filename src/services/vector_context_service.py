@@ -1,6 +1,8 @@
+# src/services/vector_context_service.py
 import logging
 import openai
 import chromadb
+from chromadb.config import Settings  # <-- IMPORT THE SETTINGS CLASS
 from typing import List, Dict, Any
 from sqlalchemy.orm import Session
 from src.db import crud
@@ -11,7 +13,13 @@ logger = logging.getLogger(__name__)
 class VectorContextService:
     def __init__(self, db_path: str, user_db_session: Session, user_id: int):
         logger.info(f"Initializing VectorContextService with DB path: {db_path}")
-        self.client = chromadb.PersistentClient(path=db_path)
+
+        # --- THE FIX: Disable telemetry to prevent log spam and errors ---
+        self.client = chromadb.PersistentClient(
+            path=db_path,
+            settings=Settings(anonymized_telemetry=False)
+        )
+
         self.collection = self.client.get_or_create_collection(
             name="aura_project_context",
             metadata={"hnsw:space": "cosine"}

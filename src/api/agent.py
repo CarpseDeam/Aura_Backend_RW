@@ -8,6 +8,42 @@ from src.core.managers import ServiceManager, ProjectManager
 from src.services import DevelopmentTeamService, ConductorService, MissionLogService
 from src.db.models import User
 from src.api.auth import get_current_user
+from src.db.database import SessionLocal  # <-- IMPORT THE SESSION FACTORY
+
+
+# --- NEW: Wrapper for the planner background task ---
+async def run_planner_task_wrapper(
+        dev_team_service: DevelopmentTeamService, user_id: str, user_idea: str, history: List[Dict[str, Any]]
+):
+    """
+    This wrapper creates a new DB session specifically for the background task,
+    ensuring it doesn't use the closed session from the original request.
+    """
+    db = SessionLocal()
+    try:
+        # Temporarily replace the service's DB session with this new, open one
+        dev_team_service.db = db
+        await dev_team_service.run_aura_planner_workflow(
+            user_id=user_id, user_idea=user_idea, conversation_history=history
+        )
+    finally:
+        db.close()
+
+
+# --- NEW: Wrapper for the dispatcher background task ---
+async def run_dispatch_task_wrapper(conductor_service: ConductorService, user_id: str):
+    """
+    Creates a new DB session for the long-running mission execution task.
+    This is critical because the agent needs to access the DB for API keys for every step.
+    """
+    db = SessionLocal()
+    try:
+        # Both the conductor and its child services will now use this session
+        conductor_service.development_team_service.db = db
+        await conductor_service.execute_mission_in_background(user_id=user_id)
+    finally:
+        db.close()
+
 
 router = APIRouter(
     prefix="/projects",
@@ -71,7 +107,6 @@ async def generate_agent_plan(
                 detail=f"Project '{request.project_name}' not found. Cannot generate plan."
             )
 
-        # --- THE FIX: Tell the mission log to load this project's data ---
         mission_log_service.load_log_for_active_project()
 
     except Exception as e:
@@ -81,11 +116,13 @@ async def generate_agent_plan(
         )
 
     user_id = str(current_user.id)
+    # --- THE FIX: Call the new wrapper function in the background ---
     background_tasks.add_task(
-        dev_team.run_aura_planner_workflow,
+        run_planner_task_wrapper,
+        dev_team_service=dev_team,
         user_id=user_id,
         user_idea=request.prompt,
-        conversation_history=request.history
+        history=request.history
     )
 
     return {"message": "Aura has received your request and is formulating a plan."}
@@ -112,12 +149,13 @@ async def dispatch_agent_mission(
             detail=f"Project '{request.project_name}' not found for this user."
         )
 
-    # --- THE FIX: Tell the mission log to load this project's data ---
     mission_log_service.load_log_for_active_project()
 
     user_id = str(current_user.id)
+    # --- THE FIX: Call the new wrapper function in the background ---
     background_tasks.add_task(
-        conductor.execute_mission_in_background,
+        run_dispatch_task_wrapper,
+        conductor_service=conductor,
         user_id=user_id
     )
     return {"message": "Dispatch acknowledged. Aura is now executing the mission plan."}
@@ -201,7 +239,7 @@ async def get_project_file_content(
     project_manager: ProjectManager = aura_services.get_project_manager()
     project_path = project_manager.load_project(project_name)
     if not project_path:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Project '{project_name}' not found.")
 
     file_content = project_manager.read_file(path)
     if file_content is None:
