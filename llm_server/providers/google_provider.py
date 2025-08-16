@@ -79,23 +79,28 @@ class GoogleProvider(BaseProvider):
                 stream=True  # Enable streaming
             )
 
-            full_tool_call = None
+            raw_function_call = None
             async for chunk in response:
                 if chunk.candidates and chunk.candidates[0].content.parts:
                     part = chunk.candidates[0].content.parts[0]
                     if part.function_call:
-                        # Gemini sends the full tool call in one chunk
-                        full_tool_call = {
-                            "tool_name": part.function_call.name,
-                            "arguments": dict(part.function_call.args)
-                        }
+                        # Gemini sends the full tool call in one chunk. Store it and break.
+                        raw_function_call = part.function_call
                         break
                     elif hasattr(part, 'text'):
                         yield part.text
 
-            if full_tool_call:
-                yield json.dumps(full_tool_call)
+            if raw_function_call:
+                try:
+                    full_tool_call = {
+                        "tool_name": raw_function_call.name,
+                        "arguments": dict(raw_function_call.args)
+                    }
+                    yield json.dumps(full_tool_call)
+                except Exception as e:
+                    error_msg = f"Google Gemini tool call parsing error: {e}. Raw args: '{raw_function_call.args}'"
+                    print(error_msg)
+                    raise RuntimeError(error_msg)
 
         except Exception as e:
             raise RuntimeError(f"Google API call failed. Details: {e}")
-
