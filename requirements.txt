@@ -17,3 +17,5 @@ pydantic-settings==2.2.1
 chromadb==0.4.24
 protobuf==4.25.3
 grpcio==1.62.2
+# --- THE FINAL FIX: Pinning numpy to a version compatible with chromadb 0.4.24 ---
+numpy==1.26.4
