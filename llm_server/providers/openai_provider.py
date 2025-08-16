@@ -1,4 +1,4 @@
-
+# src/providers/openai_provider.py
 import openai
 from typing import List, Dict, Any, Optional, AsyncGenerator
 import json
@@ -24,14 +24,13 @@ class OpenAIProvider(BaseProvider):
         return transformed_tools
 
     async def get_chat_response_stream(self, model_name: str, messages: List[Dict[str, Any]], temperature: float,
-                                       is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> \
-    AsyncGenerator[str, None]:
+                                       is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> AsyncGenerator[str, None]:
         try:
             kwargs = {
                 "model": model_name,
                 "messages": messages,
                 "temperature": temperature,
-                "stream": True,  # Enable streaming
+                "stream": True, # Enable streaming
             }
             if tools:
                 kwargs["tools"] = tools
@@ -62,13 +61,19 @@ class OpenAIProvider(BaseProvider):
 
             # After the stream, process any aggregated tool calls
             if tool_call_aggregator:
-                # For simplicity, we process the first tool call
-                first_tool_call = tool_call_aggregator[0]
-                tool_output = {
-                    "tool_name": first_tool_call["name"],
-                    "arguments": json.loads(first_tool_call["arguments"])
-                }
-                yield json.dumps(tool_output)
+                try:
+                    # For simplicity, we process the first tool call
+                    first_tool_call = tool_call_aggregator[0]
+                    tool_output = {
+                        "tool_name": first_tool_call["name"],
+                        "arguments": json.loads(first_tool_call["arguments"])
+                    }
+                    yield json.dumps(tool_output)
+                except json.JSONDecodeError as e:
+                    raw_args = tool_call_aggregator[0].get("arguments", "")
+                    error_msg = f"OpenAI JSON parsing error for tool call: {e}. Raw args: '{raw_args}'"
+                    print(error_msg)
+                    raise RuntimeError(error_msg)
 
         except openai.APIError as e:
             raise RuntimeError(f"OpenAI API call failed. Status: {e.status_code}. Details: {e.message}")

@@ -62,15 +62,19 @@ class AnthropicProvider(BaseProvider):
                     elif event.type == "content_block_delta" and event.delta.type == "input_json_delta":
                         tool_input_aggregator += event.delta.partial_json
                     elif event.type == "message_stop" and tool_input_aggregator:
-                        tool_use_block = next(
-                            (block for block in (await stream.get_final_message()).content if block.type == 'tool_use'),
-                            None)
-                        if tool_use_block:
-                            tool_output = {
-                                "tool_name": tool_use_block.name,
-                                "arguments": json.loads(tool_input_aggregator)  # Use aggregated JSON
-                            }
-                            yield json.dumps(tool_output)
+                        try:
+                            tool_use_block = next((block for block in (await stream.get_final_message()).content if
+                                                   block.type == 'tool_use'), None)
+                            if tool_use_block:
+                                tool_output = {
+                                    "tool_name": tool_use_block.name,
+                                    "arguments": json.loads(tool_input_aggregator)  # Use aggregated JSON
+                                }
+                                yield json.dumps(tool_output)
+                        except json.JSONDecodeError as e:
+                            error_msg = f"Anthropic JSON parsing error for tool call: {e}. Raw data: '{tool_input_aggregator}'"
+                            print(error_msg)
+                            raise RuntimeError(error_msg)
 
         except anthropic.APIError as e:
             raise RuntimeError(f"Anthropic API call failed. Status: {e.status_code}. Details: {e.message}")

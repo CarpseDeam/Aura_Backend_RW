@@ -61,12 +61,18 @@ class DeepseekProvider(BaseProvider):
                         yield delta.content
 
             if tool_call_aggregator:
-                first_tool_call = tool_call_aggregator[0]
-                tool_output = {
-                    "tool_name": first_tool_call["name"],
-                    "arguments": json.loads(first_tool_call["arguments"])
-                }
-                yield json.dumps(tool_output)
+                try:
+                    first_tool_call = tool_call_aggregator[0]
+                    tool_output = {
+                        "tool_name": first_tool_call["name"],
+                        "arguments": json.loads(first_tool_call["arguments"])
+                    }
+                    yield json.dumps(tool_output)
+                except json.JSONDecodeError as e:
+                    raw_args = tool_call_aggregator[0].get("arguments", "")
+                    error_msg = f"DeepSeek/OpenAI JSON parsing error for tool call: {e}. Raw args: '{raw_args}'"
+                    print(error_msg)
+                    raise RuntimeError(error_msg)
 
         except openai.APIError as e:
             raise RuntimeError(f"DeepSeek API call failed. Status: {e.status_code}. Details: {e.message}")

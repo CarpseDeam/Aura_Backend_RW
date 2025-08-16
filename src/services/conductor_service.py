@@ -71,12 +71,6 @@ class ConductorService:
                     self.log("info",
                              f"Executing task {current_task['id']} for user {user_id}: {current_task['description']}")
 
-                    # --- DIAGNOSTIC LOGGING ---
-                    logger.warning(
-                        f"AURA_DEBUG: [1] About to ask DevTeam for a tool call for task: {current_task['description']}")
-                    await self._post_chat_message(user_id, "DEBUG",
-                                                  f"[1] Getting tool for: {current_task['description']}")
-
                     tool_call = await self.development_team_service.run_coding_task(
                         user_id=user_id,
                         task=current_task,
@@ -87,23 +81,9 @@ class ConductorService:
                         error_msg = f"Could not determine a tool call for task: '{current_task['description']}'"
                         current_task['last_error'] = error_msg
                         retry_count += 1
-
-                        # --- DIAGNOSTIC LOGGING ---
-                        logger.error(f"AURA_DEBUG: [2] DevTeam FAILED to provide a tool call.")
-                        await self._post_chat_message(user_id, "DEBUG", f"[2] FAILED to get a tool call.")
-
                         continue
 
-                    # --- DIAGNOSTIC LOGGING ---
-                    logger.warning(f"AURA_DEBUG: [2] DevTeam provided tool call: {tool_call}")
-                    await self._post_chat_message(user_id, "DEBUG", f"[2] Got tool: {tool_call.get('tool_name')}")
-
                     result = await self.tool_runner_service.run_tool_by_dict(tool_call, user_id=user_id)
-
-                    # --- DIAGNOSTIC LOGGING ---
-                    logger.warning(f"AURA_DEBUG: [3] Tool runner returned result: {result}")
-                    await self._post_chat_message(user_id, "DEBUG", f"[3] Tool result: {str(result)[:200]}")
-
                     result_is_error, error_message = self._is_result_an_error(result)
 
                     if not result_is_error:
