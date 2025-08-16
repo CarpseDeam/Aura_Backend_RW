@@ -1,7 +1,7 @@
 # src/schemas/api_key.py
 """Pydantic schemas for multi-provider API Key validation."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import List
 
 class ProviderKeyBase(BaseModel):
@@ -15,15 +15,10 @@ class ProviderKeyCreate(ProviderKeyBase):
 class ProviderKey(ProviderKeyBase):
     """Schema for representing a configured API key in API responses."""
     masked_key: str
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        """Pydantic configuration options."""
-        from_attributes = True
 
 class ProviderKeyList(BaseModel):
     """Schema for returning a list of configured keys."""
     keys: List[ProviderKey]
-
-    class Config:
-        """Pydantic configuration options."""
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

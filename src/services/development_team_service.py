@@ -51,13 +51,14 @@ class DevelopmentTeamService:
         self.llm_server_url = os.getenv("LLM_SERVER_URL")
 
         assignments_from_db = crud.get_assignments_for_user(self.db, user_id=self.user_id)
-        self.llm_client.set_assignments({a.role_name: a.model_identifier for a in assignments_from_db})
+        self.llm_client.set_assignments({a.role_name: a.model_id for a in assignments_from_db})
         self.llm_client.set_temperatures({a.role_name: a.temperature for a in assignments_from_db})
 
     async def _make_llm_call(self, user_id: int, role: str, messages: List[Dict[str, Any]],
                              is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> str:
         """
         Makes a secure, asynchronous HTTP call to the dedicated LLM microservice.
+        This method accumulates the full response before returning.
         """
         if not self.llm_server_url:
             return "Error: LLM_SERVER_URL is not configured. The main app cannot contact the AI microservice."
@@ -88,8 +89,13 @@ class DevelopmentTeamService:
                 invoke_url = f"{self.llm_server_url}/invoke"
                 async with session.post(invoke_url, json=payload, headers=headers, timeout=300) as response:
                     if response.status == 200:
-                        data = await response.json()
-                        return data.get("reply", "Error: Invalid response from LLM service.")
+                        # Find the final JSON object in the streaming response
+                        async for line in response.content:
+                            if line:
+                                data = json.loads(line)
+                                if "final_response" in data:
+                                    return data["final_response"].get("reply", "Error: Invalid response from LLM service.")
+                        return "Error: Stream ended without a final response object."
                     else:
                         error_detail = await response.text()
                         self.log("error", f"LLM service returned error {response.status}: {error_detail}")
@@ -100,6 +106,65 @@ class DevelopmentTeamService:
         except Exception as e:
             self.log("error", f"An unexpected error occurred while calling the LLM service: {e}")
             return f"An unexpected error occurred while calling the AI microservice: {e}"
+
+    async def _stream_code_to_client_and_accumulate(self, user_id: str, role: str, messages: List[Dict[str, Any]],
+                                                    file_path: str) -> str:
+        """
+        A specialized streaming method. It makes a call to the LLM service,
+        broadcasts each code chunk over WebSocket for live streaming, and
+        returns the fully accumulated code at the end.
+        """
+        if not self.llm_server_url:
+            return "Error: LLM_SERVER_URL is not configured."
+
+        provider_name, model_name = self.llm_client.get_model_for_role(role)
+        api_key = crud.get_decrypted_key_for_provider(self.db, int(user_id), provider_name=provider_name)
+        if not all([provider_name, model_name, api_key]):
+            return f"Error: Missing configuration for role '{role}' or provider '{provider_name}'."
+
+        payload = {
+            "provider_name": provider_name, "model_name": model_name, "messages": messages,
+            "temperature": self.llm_client.get_role_temperature(role), "is_json": False, "tools": None,
+        }
+        headers = {"Content-Type": "application/json", "X-Provider-API-Key": api_key}
+        full_code_accumulator = []
+        is_first_chunk = True
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                invoke_url = f"{self.llm_server_url}/invoke"
+                async with session.post(invoke_url, json=payload, headers=headers, timeout=300) as response:
+                    if response.status != 200:
+                        error_detail = await response.text()
+                        return f"Error: LLM service failed with status {response.status}. Details: {error_detail}"
+
+                    async for line in response.content:
+                        if not line: continue
+                        data = json.loads(line)
+                        if "chunk" in data:
+                            chunk = data["chunk"]
+                            full_code_accumulator.append(chunk)
+                            await websocket_manager.broadcast_to_user({
+                                "type": "code_chunk",
+                                "content": {
+                                    "filePath": file_path,
+                                    "chunk": chunk,
+                                    "isFirstChunk": is_first_chunk
+                                }
+                            }, user_id)
+                            is_first_chunk = False
+                        elif "error" in data:
+                            return f"Error from LLM service stream: {data['error']}"
+
+            final_code = "".join(full_code_accumulator)
+            # Clean up potential markdown code blocks from the final result
+            code_block_regex = re.compile(r'```(?:python)?\n(.*?)\n```', re.DOTALL)
+            match = code_block_regex.search(final_code)
+            return match.group(1).strip() if match else final_code.strip()
+
+        except Exception as e:
+            self.log("error", f"Error during code streaming for user {user_id}: {e}")
+            return f"An unexpected error occurred during code streaming: {e}"
 
     async def run_companion_chat(self, user_id: str, user_prompt: str, conversation_history: list) -> str:
         self.log("info", f"Companion chat initiated for user {user_id}")
@@ -164,7 +229,7 @@ class DevelopmentTeamService:
     async def _generate_code_for_task(self, user_id: str, path: str, task_description: str) -> str:
         """
         A dedicated method to invoke the Coder AI to generate code for a file.
-        This is the second step in the new code writing workflow.
+        This now uses the new streaming method.
         """
         self.log("info", f"Generating code for '{path}'...")
         file_tree = "\n".join(
@@ -180,16 +245,11 @@ class DevelopmentTeamService:
         )
         messages = [{"role": "user", "content": prompt}]
 
-        generated_code = await self._make_llm_call(int(user_id), "coder", messages)
+        # Use the new streaming call
+        generated_code = await self._stream_code_to_client_and_accumulate(user_id, "coder", messages, path)
 
-        if generated_code.startswith("Error:"):
-            return generated_code
+        return generated_code
 
-        code_block_regex = re.compile(r'```(?:python)?\n(.*?)\n```', re.DOTALL)
-        match = code_block_regex.search(generated_code)
-        if match:
-            return match.group(1).strip()
-        return generated_code.strip()
 
     async def run_coding_task(self, user_id: str, task: Dict[str, any], last_error: Optional[str] = None) -> Optional[
         Dict[str, str]]:

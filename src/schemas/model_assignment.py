@@ -11,25 +11,16 @@ class AvailableModels(BaseModel):
 
 class ModelAssignment(BaseModel):
     """Represents a single model assignment for a role."""
-    # This configuration tells Pydantic to not issue a warning for field names starting with "model_".
-    model_config = ConfigDict(protected_namespaces=())
-
+    model_config = ConfigDict(protected_namespaces=(), from_attributes=True)
     role_name: str
     model_id: str
     temperature: float = Field(..., ge=0.0, le=2.0)
-
-    class Config:
-        """Pydantic configuration options."""
-        from_attributes = True
 
 
 class ModelAssignmentList(BaseModel):
     """A list of model assignments, used for retrieving all assignments for a user."""
     assignments: List[ModelAssignment]
-
-    class Config:
-        """Pydantic configuration options."""
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ModelAssignmentUpdate(BaseModel):

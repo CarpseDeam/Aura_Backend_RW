@@ -1,6 +1,6 @@
 # src/schemas/mission.py
 """Pydantic schemas for mission task interactions."""
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Dict, Any, Optional
 
 class Task(BaseModel):
@@ -10,9 +10,8 @@ class Task(BaseModel):
     done: bool
     tool_call: Optional[Dict[str, Any]] = None
     last_error: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
 
 class TaskCreateRequest(BaseModel):
     """Schema for creating a new task."""

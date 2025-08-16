@@ -33,7 +33,7 @@ async def stream_llm_response(
     request: LLMRequest,
     provider_specific_tools: Optional[List[Dict[str, Any]]]
 ) -> AsyncGenerator[str, None]:
-    """An async generator that yields chunks from the LLM provider."""
+    """An async generator that yields JSON-wrapped chunks from the LLM provider."""
     try:
         full_response = ""
         async for chunk in provider.get_chat_response_stream(
@@ -44,24 +44,20 @@ async def stream_llm_response(
             tools=provider_specific_tools
         ):
             full_response += chunk
-            yield chunk
+            # Wrap each individual chunk in a JSON object and yield it as a string with a newline.
+            # This makes the stream a valid newline-delimited JSON (ndjson) stream.
+            yield json.dumps({"chunk": chunk}) + "\n"
 
-        # If the response was supposed to be JSON, we wrap the final result.
-        # This allows the client to accumulate chunks and then parse the final JSON.
-        if request.is_json or (request.tools and '"tool_name":' in full_response):
-            final_output = json.dumps({"reply": full_response})
-            yield final_output
-        else:
-            # For regular text, we can just send the raw chunks.
-            # To signal the end and wrap it for the client, we can send a final JSON.
-            final_output = json.dumps({"reply": full_response})
-            yield final_output
+        # After the stream is complete, send a final object containing the full response.
+        # This is useful for clients that need to process the entire result at the end (e.g., for JSON validation).
+        final_payload = {"final_response": {"reply": full_response}}
+        yield json.dumps(final_payload) + "\n"
 
     except Exception as e:
         error_message = f"Error during streaming: {e}"
         print(error_message)
         # Yield a JSON error message so the client can handle it gracefully.
-        yield json.dumps({"error": error_message})
+        yield json.dumps({"error": error_message}) + "\n"
 
 
 @app.post("/invoke")

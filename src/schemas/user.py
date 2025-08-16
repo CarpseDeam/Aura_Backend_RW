@@ -1,6 +1,6 @@
 # src/schemas/user.py
 """Pydantic models for User data."""
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 class UserBase(BaseModel):
     """Base schema for user properties."""
@@ -19,7 +19,4 @@ class UserLogin(BaseModel):
 class User(UserBase):
     """Schema for representing a user in API responses."""
     id: int
-
-    class Config:
-        """Pydantic configuration options."""
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

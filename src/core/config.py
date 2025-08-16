@@ -8,7 +8,7 @@ configuration for the entire application.
 """
 import sys
 from pydantic import ValidationError
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -33,12 +33,10 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
-    class Config:
-        """Pydantic configuration options for the Settings class."""
-        # The env_file directive is removed. This forces the app to rely ONLY
-        # on environment variables in production, which is how Railway works.
-        # This is the fix for the silent startup crash.
-        env_file_encoding = "utf-8"
+    # THIS IS THE FIX: Explicitly disable .env file loading.
+    # This forces Pydantic to ONLY use environment variables, which is
+    # the correct behavior for a containerized deployment on Railway.
+    model_config = SettingsConfigDict(env_file=None)
 
 
 # Create a single, globally accessible instance of the settings.
@@ -46,7 +44,22 @@ class Settings(BaseSettings):
 try:
     settings = Settings()
 except ValidationError as e:
-    print("!!! AURA BACKEND: CRITICAL CONFIGURATION ERROR !!!", file=sys.stderr)
-    print("!!! One or more required environment variables are missing or invalid.", file=sys.stderr)
-    print("\n" + str(e), file=sys.stderr)
+    # This error handling is critical for deployment. If the app crashes
+    # silently, it's almost always because an environment variable is missing.
+    # This block makes the error loud and clear in the logs.
+    print("="*80, file=sys.stderr)
+    print("!!! AURA BACKEND: FATAL ERROR - MISSING ENVIRONMENT VARIABLES !!!", file=sys.stderr)
+    print("="*80, file=sys.stderr)
+    print("The application failed to start because one or more required environment", file=sys.stderr)
+    print("variables are not set in the Railway deployment environment.", file=sys.stderr)
+    print("\nDETAILS:", file=sys.stderr)
+    print(e, file=sys.stderr)
+    print("\nACTION REQUIRED:", file=sys.stderr)
+    print("Go to your Railway project -> aura-backend service -> Variables", file=sys.stderr)
+    print("and ensure all of the following are set:", file=sys.stderr)
+    print("- DATABASE_URL", file=sys.stderr)
+    print("- JWT_SECRET_KEY", file=sys.stderr)
+    print("- ENCRYPTION_KEY", file=sys.stderr)
+    print("- BETA_ACCESS_KEY", file=sys.stderr)
+    print("="*80, file=sys.stderr)
     sys.exit(1) # Exit with a failure code to make the crash obvious.
