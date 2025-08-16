@@ -1,4 +1,4 @@
-# src/providers/openai_provider.py
+
 import openai
 from typing import List, Dict, Any, Optional, AsyncGenerator
 import json
@@ -10,14 +10,28 @@ class OpenAIProvider(BaseProvider):
         super().__init__(api_key)
         self.client = openai.AsyncOpenAI(api_key=self.api_key)
 
+    def transform_tools_for_provider(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        transformed_tools = []
+        for tool in tools:
+            transformed_tools.append({
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["parameters"]
+                }
+            })
+        return transformed_tools
+
     async def get_chat_response_stream(self, model_name: str, messages: List[Dict[str, Any]], temperature: float,
-                                       is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> AsyncGenerator[str, None]:
+                                       is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> \
+    AsyncGenerator[str, None]:
         try:
             kwargs = {
                 "model": model_name,
                 "messages": messages,
                 "temperature": temperature,
-                "stream": True, # Enable streaming
+                "stream": True,  # Enable streaming
             }
             if tools:
                 kwargs["tools"] = tools

@@ -23,8 +23,19 @@ class AnthropicProvider(BaseProvider):
             prepared_messages = messages
         return system_prompt, prepared_messages
 
+    def transform_tools_for_provider(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        transformed_tools = []
+        for tool in tools:
+            transformed_tools.append({
+                "name": tool["name"],
+                "description": tool["description"],
+                "input_schema": tool["parameters"]
+            })
+        return transformed_tools
+
     async def get_chat_response_stream(self, model_name: str, messages: List[Dict[str, Any]], temperature: float,
-                                       is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> AsyncGenerator[str, None]:
+                                       is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> \
+    AsyncGenerator[str, None]:
         try:
             system_prompt, prepared_messages = self._prepare_messages_and_system_prompt(messages)
 
@@ -33,7 +44,7 @@ class AnthropicProvider(BaseProvider):
                 "max_tokens": 4096,
                 "messages": prepared_messages,
                 "temperature": temperature,
-                "stream": True, # Enable streaming
+                "stream": True,  # Enable streaming
             }
             if system_prompt:
                 kwargs["system"] = system_prompt
@@ -49,13 +60,15 @@ class AnthropicProvider(BaseProvider):
                     if event.type == "content_block_delta" and event.delta.type == "text_delta":
                         yield event.delta.text
                     elif event.type == "content_block_delta" and event.delta.type == "input_json_delta":
-                         tool_input_aggregator += event.delta.partial_json
+                        tool_input_aggregator += event.delta.partial_json
                     elif event.type == "message_stop" and tool_input_aggregator:
-                        tool_use_block = next((block for block in (await stream.get_final_message()).content if block.type == 'tool_use'), None)
+                        tool_use_block = next(
+                            (block for block in (await stream.get_final_message()).content if block.type == 'tool_use'),
+                            None)
                         if tool_use_block:
                             tool_output = {
                                 "tool_name": tool_use_block.name,
-                                "arguments": json.loads(tool_input_aggregator) # Use aggregated JSON
+                                "arguments": json.loads(tool_input_aggregator)  # Use aggregated JSON
                             }
                             yield json.dumps(tool_output)
 

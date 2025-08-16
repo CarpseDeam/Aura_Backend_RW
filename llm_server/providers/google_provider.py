@@ -30,19 +30,20 @@ class GoogleProvider(BaseProvider):
     def transform_tools_for_provider(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if not tools:
             return []
-        transformed_tools = []
+
+        function_declarations = []
         for tool in tools:
-            tool_copy = copy.deepcopy(tool)
-            if 'function_declarations' in tool_copy:
-                for func in tool_copy['function_declarations']:
-                    if 'parameters' in func:
-                        func['parameters'] = self._uppercase_schema_types(func['parameters'])
-            transformed_tools.append(tool_copy)
-        return transformed_tools
+            function_declarations.append({
+                "name": tool["name"],
+                "description": tool["description"],
+                "parameters": self._uppercase_schema_types(tool.get("parameters", {}))
+            })
+
+        return [{"function_declarations": function_declarations}]
 
     async def get_chat_response_stream(self, model_name: str, messages: List[Dict[str, Any]], temperature: float,
                                        is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> \
-    AsyncGenerator[str, None]:
+            AsyncGenerator[str, None]:
         try:
             system_prompt = None
             conversation_messages = []
@@ -97,3 +98,4 @@ class GoogleProvider(BaseProvider):
 
         except Exception as e:
             raise RuntimeError(f"Google API call failed. Details: {e}")
+

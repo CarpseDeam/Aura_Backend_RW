@@ -13,6 +13,19 @@ class DeepseekProvider(BaseProvider):
             base_url="https://api.deepseek.com/v1"
         )
 
+    def transform_tools_for_provider(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        transformed_tools = []
+        for tool in tools:
+            transformed_tools.append({
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": tool["parameters"]
+                }
+            })
+        return transformed_tools
+
     async def get_chat_response_stream(self, model_name: str, messages: List[Dict[str, Any]], temperature: float,
                                        is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> AsyncGenerator[str, None]:
         try:
