@@ -2,13 +2,14 @@ fastapi
 uvicorn[standard]
 python-dotenv
 aiohttp
-pydantic-settings
 SQLAlchemy
 psycopg2-binary
 passlib==1.7.4
 bcrypt==3.2.2
 python-jose[cryptography]
 openai
-chromadb
 python-multipart
 pycodestyle
+pydantic==2.7.1
+pydantic-settings==2.2.1
+chromadb==0.4.24
