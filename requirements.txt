@@ -13,8 +13,8 @@ python-multipart
 pycodestyle
 pydantic==2.7.1
 pydantic-settings==2.2.1
-# --- THE FIX: Downgrading chromadb to a known stable version to fix the sqlite bug ---
-chromadb==0.4.22
+# --- THE FIX: Using a stable patch version to fix chromadb internal bugs ---
+chromadb==0.4.24
 protobuf==4.25.3
 grpcio==1.62.2
 numpy==1.26.4
