@@ -70,7 +70,7 @@ class GoogleProvider(BaseProvider):
             )
             generation_config = genai.types.GenerationConfig(
                 temperature=temperature,
-                response_mime_type="application/json" if is_json else "text/plain",
+                response_mime_type="application/json" if is_json and not tools else "text/plain",
             )
 
             response = await model.generate_content_async(
