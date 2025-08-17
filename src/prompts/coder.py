@@ -10,7 +10,7 @@ CODER_PROMPT = textwrap.dedent("""
     - You MUST analyze the user's request, the project context, and the available tools.
     - You MUST then select the single most appropriate tool to accomplish the given task.
     - Your entire response MUST be ONLY the JSON object for that single tool call.
-    - Do NOT include any conversational text, explanations, apologies, or markdown formatting before or after the JSON object. Your response must start with `{` and end with `}`.
+    - Do NOT include any conversational text, explanations, apologies, or markdown formatting before or after the JSON object. Your response must start with `{{` and end with `}}`.
 
     **EXAMPLE OF A PERFECT RESPONSE:**
     ```json
