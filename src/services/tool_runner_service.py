@@ -95,12 +95,6 @@ class ToolRunnerService:
 
         print(f"▶️  Executing: {action_id} with params {display_params}")
 
-        # Frontend doesn't have widgets, so we use websockets directly
-        # widget_id = id(invocation)
-        # self.event_bus.emit(
-        #     "tool_call_initiated",
-        #     ToolCallInitiated(widget_id, action_id, display_params)
-        # )
         await asyncio.sleep(0.1)
 
         result = None
@@ -119,12 +113,27 @@ class ToolRunnerService:
                 status = "SUCCESS"
 
             if status == "SUCCESS" and action_id in self.FILESYSTEM_TOOLS:
-                # THE FIX: Proactively notify the frontend about the change.
                 file_tree = self.project_manager.get_file_tree()
                 await websocket_manager.broadcast_to_user({
                     "type": "file_tree_updated",
                     "content": file_tree
                 }, user_id)
+
+                if action_id == 'write_file' and 'path' in execution_params:
+                    file_path_str = execution_params['path']
+                    try:
+                        content = Path(file_path_str).read_text(encoding='utf-8')
+                        relative_path = str(Path(file_path_str).relative_to(self.project_manager.active_project_path))
+                        await websocket_manager.broadcast_to_user({
+                            "type": "file_content_updated",
+                            "content": {
+                                "filePath": relative_path,
+                                "content": content
+                            }
+                        }, user_id)
+                    except Exception as e:
+                        logger.error(f"Could not read file content after write to send to UI: {e}")
+
 
             print(f"✅ Result from {action_id}: {result}")
             return result
@@ -135,11 +144,6 @@ class ToolRunnerService:
             print(result)
             return result
         finally:
-            # Frontend doesn't have widgets, so we can comment this out
-            # self.event_bus.emit(
-            #     "tool_call_completed",
-            #     ToolCallCompleted(widget_id, status, str(result))
-            # )
             pass
 
     def _prepare_parameters(self, action_function: callable, action_params: dict) -> dict:

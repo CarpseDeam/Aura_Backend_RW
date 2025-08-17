@@ -1,4 +1,4 @@
-# src/foundry/actions/file_system_actions.py
+# src/services/file_system_actions.py
 """
 Contains actions related to direct file system manipulation.
 All functions in this module assume that any relative paths have been
@@ -15,42 +15,16 @@ from src.core.managers import ProjectManager
 logger = logging.getLogger(__name__)
 
 
-async def write_file(path: str, content: str, event_bus: EventBus, project_manager: ProjectManager) -> str:
+async def write_file(path: str, content: str) -> str:
     """
     Writes content to a specified file, creating directories if necessary.
     This version first streams the content to the GUI before writing.
     """
     try:
-        # --- THE FIX: Removed the strict check that prevented writing empty files. ---
-        # It's valid to create an empty file (e.g., __init__.py).
-        # We will now write whatever content is provided, including an empty string.
-
-        logger.info(f"Attempting to stream and write to file: {path}")
+        logger.info(f"Attempting to write to file: {path}")
         path_obj = Path(path)
-
-        # The 'content' might be None from some tool calls, default to empty string.
         content = content or ""
 
-        # Determine the relative path for the event
-        relative_path = path
-        if project_manager.active_project_path and path_obj.is_absolute():
-            try:
-                relative_path = str(path_obj.relative_to(project_manager.active_project_path))
-            except ValueError:
-                pass  # Path is not within the project, use the full path as a fallback
-
-        # --- Streaming Logic ---
-        # Clear the tab first by sending an empty chunk with a special flag/initial call
-        event_bus.emit("stream_code_chunk", StreamCodeChunk(filename=relative_path, chunk="", is_first_chunk=True))
-        await asyncio.sleep(0.01)
-
-        chunk_size = 100
-        for i in range(0, len(content), chunk_size):
-            chunk = content[i:i + chunk_size]
-            event_bus.emit("stream_code_chunk", StreamCodeChunk(filename=relative_path, chunk=chunk))
-            await asyncio.sleep(0.01)
-
-        # --- File Write Logic ---
         path_obj.parent.mkdir(parents=True, exist_ok=True)
         bytes_written = path_obj.write_text(content, encoding='utf-8')
         success_message = f"Successfully wrote {bytes_written} bytes to {path}"

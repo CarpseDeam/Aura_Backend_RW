@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Type, Optional, AsyncGenerator
 import json
 
-from .providers import BaseProvider, GoogleProvider, OpenAIProvider, AnthropicProvider, DeepseekProvider
+from providers import BaseProvider, GoogleProvider, OpenAIProvider, AnthropicProvider, DeepseekProvider
 
 app = FastAPI(
     title="Aura LLM Server",
