@@ -2,10 +2,11 @@
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, status, Query
 from pydantic import BaseModel
 from typing import List, Dict, Any
+from pathlib import Path
 
 from src.dependencies import get_aura_services
 from src.core.managers import ServiceManager, ProjectManager
-from src.services import DevelopmentTeamService, ConductorService, MissionLogService
+from src.services import DevelopmentTeamService, ConductorService, MissionLogService, VectorContextService
 from src.db.models import User
 from src.api.auth import get_current_user
 from src.db.database import SessionLocal
@@ -55,6 +56,15 @@ async def run_dispatch_task_wrapper(conductor_service: ConductorService, user_id
     finally:
         db.close()
 
+async def run_reindex_task_wrapper(
+    vcs: VectorContextService, file_path: Path, content: str
+):
+    """Wrapper to run the re-indexing task in the background."""
+    try:
+        await vcs.reindex_file(file_path, content)
+    except Exception as e:
+        print(f"BACKGROUND RE-INDEXING FAILED for {file_path}: {e}")
+
 
 router = APIRouter(
     prefix="/projects",
@@ -75,6 +85,10 @@ class DispatchRequest(BaseModel):
 class ChatRequest(BaseModel):
     prompt: str
     history: List[Dict[str, Any]]
+
+class FileWriteRequest(BaseModel):
+    path: str
+    content: str
 
 
 @router.post("/chat")
@@ -108,6 +122,10 @@ async def generate_agent_plan(
         if not project_path:
             raise HTTPException(status_code=404, detail=f"Project '{request.project_name}' not found.")
 
+        vcs: VectorContextService = aura_services.vector_context_service
+        if vcs:
+            vcs.load_for_project(Path(project_path))
+
         mission_log_service.load_log_for_active_project()
 
     except Exception as e:
@@ -137,6 +155,10 @@ async def dispatch_agent_mission(
     project_path = project_manager.load_project(request.project_name)
     if not project_path:
         raise HTTPException(status_code=404, detail=f"Project '{request.project_name}' not found.")
+
+    vcs: VectorContextService = aura_services.vector_context_service
+    if vcs:
+        vcs.load_for_project(Path(project_path))
 
     mission_log_service.load_log_for_active_project()
 
@@ -224,3 +246,36 @@ async def get_project_file_content(
         raise HTTPException(status_code=404, detail=f"File not found at path: '{path}'.")
 
     return {"content": file_content}
+
+@router.post("/workspace/{project_name}/file", status_code=status.HTTP_204_NO_CONTENT)
+async def write_project_file_content(
+    project_name: str,
+    request: FileWriteRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    aura_services: ServiceManager = Depends(get_aura_services)
+):
+    project_manager: ProjectManager = aura_services.get_project_manager()
+    project_path_str = project_manager.load_project(project_name)
+    if not project_path_str:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found.")
+
+    project_path = Path(project_path_str)
+
+    vcs: VectorContextService = aura_services.vector_context_service
+    if vcs:
+        vcs.load_for_project(project_path)
+
+    full_file_path_str = project_manager.write_file(request.path, request.content)
+    if full_file_path_str is None:
+        raise HTTPException(status_code=400, detail="Invalid file path or failed to write file.")
+
+    if vcs:
+        background_tasks.add_task(
+            run_reindex_task_wrapper,
+            vcs=vcs,
+            file_path=Path(full_file_path_str),
+            content=request.content
+        )
+
+    return None

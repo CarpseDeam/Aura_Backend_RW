@@ -183,12 +183,31 @@ class ProjectManager:
         if not self.active_project_path: return None
         # Basic security check to prevent path traversal
         full_path = (self.active_project_path / relative_path).resolve()
-        if self.active_project_path not in full_path.parents:
+        if self.active_project_path not in full_path.parents and self.active_project_path != full_path.parent:
             return None
         if not full_path.exists(): return None
         try:
             return full_path.read_text(encoding='utf-8')
         except Exception:
+            return None
+
+    def write_file(self, relative_path: str, content: str) -> Optional[str]:
+        """Writes content to a file within the active project, ensuring it's sandboxed."""
+        if not self.active_project_path:
+            return None
+
+        full_path = (self.active_project_path / relative_path).resolve()
+        if self.active_project_path not in full_path.parents and self.active_project_path != full_path.parent:
+            print(f"SECURITY WARNING: Attempt to write outside project sandbox denied for path: {full_path}")
+            return None
+
+        try:
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+            full_path.write_text(content, encoding='utf-8')
+            print(f"Successfully wrote to file: {full_path}")
+            return str(full_path)
+        except Exception as e:
+            print(f"Error writing to file {full_path}: {e}")
             return None
 
     def get_file_tree(self) -> List[Dict]:

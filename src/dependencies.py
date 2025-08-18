@@ -47,7 +47,7 @@ def get_aura_services(
 
     # --- Initialize services with shared components ---
     mission_log_service = MissionLogService(project_manager, event_bus)
-    vector_context_service = None
+    vector_context_service = VectorContextService(user_db_session=db, user_id=current_user.id)
 
     tool_runner_service = ToolRunnerService(
         event_bus=event_bus,

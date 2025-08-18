@@ -1,10 +1,11 @@
 # src/api/missions.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
+from pathlib import Path
 
 from src.dependencies import get_aura_services
 from src.core.managers import ServiceManager, ProjectManager
-from src.services import MissionLogService
+from src.services import MissionLogService, VectorContextService
 from src.db.models import User
 from src.api.auth import get_current_user
 from src.schemas import mission as schemas
@@ -30,6 +31,10 @@ async def get_project_mission_log(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Project '{project_name}' not found for this user."
         )
+
+    vcs: VectorContextService = aura_services.vector_context_service
+    if vcs:
+        vcs.load_for_project(Path(project_path))
 
     mission_log_service: MissionLogService = aura_services.mission_log_service
     # Ensure the log for the just-loaded project is active in the service
