@@ -1,8 +1,8 @@
 # VectorContextService.py
 import logging
-import openai
 import chromadb
 from chromadb.config import Settings
+from chromadb.utils import embedding_functions
 from typing import List, Dict, Any
 from sqlalchemy.orm import Session
 from src.db import crud
@@ -21,20 +21,19 @@ class VectorContextService:
         self.project_root: Path | None = None
         self.db_session = user_db_session
         self.user_id = user_id
-        self.openai_client = None
+        # The embedding function is now part of the service itself.
+        # Using a popular, lightweight, and effective model.
+        self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name="all-MiniLM-L6-v2"
+        )
+        logger.info("Using Hugging Face SentenceTransformer for embeddings.")
 
     def load_for_project(self, project_path: Path):
         """
-        Loads or creates the vector database for a specific project.
-        This version has been modified to ALWAYS use a local, file-based
-        persistent database within the backend's own volume. This eliminates
-        the need for a separate ChromaDB service and removes inter-service
-        networking issues.
+        Loads or creates the vector database for a specific project using a
+        local, file-based ChromaDB and a Hugging Face embedding model.
         """
         self.project_root = project_path
-
-        # The RAG database will live inside the user's project directory,
-        # which is already on the persistent volume.
         rag_db_path = project_path / ".rag_db"
 
         logger.info(f"Using local file-based vector database for project at: {rag_db_path}")
@@ -43,46 +42,22 @@ class VectorContextService:
             settings=Settings(anonymized_telemetry=False)
         )
 
-        # Collection name is still unique per project.
         collection_name = f"aura_project_{self.user_id}_{project_path.name.replace(' ', '_').replace('.', '_')}"
 
+        # When creating the collection, we now provide the embedding function directly.
+        # ChromaDB will handle the embedding process automatically from here on.
         self.collection = self.client.get_or_create_collection(
             name=collection_name,
+            embedding_function=self.embedding_function,
             metadata={"hnsw:space": "cosine"}
         )
         logger.info(f"Vector database loaded. Collection '{self.collection.name}' has {self.collection.count()} items.")
 
-
     def _ensure_project_loaded(self):
-        """Checks if a project's vector DB is loaded before performing an operation."""
         if not self.collection or not self.client or not self.project_root:
             raise RuntimeError("VectorContextService has not been loaded for a project. Call load_for_project() first.")
 
-    def _initialize_openai_client(self):
-        self._ensure_project_loaded()
-        if self.openai_client:
-            return True
-        api_key = crud.get_decrypted_key_for_provider(self.db_session, self.user_id, "openai")
-        if not api_key:
-            logger.error(f"OpenAI API key not found for user {self.user_id}. Cannot create embeddings.")
-            return False
-        self.openai_client = openai.AsyncOpenAI(api_key=api_key)
-        return True
-
-    async def _get_embeddings(self, texts: List[str]) -> List[List[float]]:
-        if not self._initialize_openai_client():
-            return []
-
-        texts = [text.replace("\n", " ") for text in texts]
-        try:
-            response = await self.openai_client.embeddings.create(
-                input=texts,
-                model="text-embedding-3-small"
-            )
-            return [embedding.embedding for embedding in response.data]
-        except Exception as e:
-            logger.error(f"Failed to get embeddings from OpenAI: {e}")
-            return []
+    # The OpenAI-specific methods `_initialize_openai_client` and `_get_embeddings` are now REMOVED.
 
     async def add_documents(self, documents: List[str], metadatas: List[Dict[str, Any]]):
         self._ensure_project_loaded()
@@ -90,16 +65,10 @@ class VectorContextService:
             logger.warning("add_documents called with no documents.")
             return
 
-        embeddings = await self._get_embeddings(documents)
-
-        if not embeddings:
-            logger.error("Received no embeddings from OpenAI. Aborting add.")
-            return
-
+        # No need to get embeddings manually anymore. ChromaDB does it for us.
         ids = [f"{meta['file_path']}-{meta.get('node_type', 'file')}-{meta.get('node_name', '')}" for meta in metadatas]
 
         self.collection.upsert(
-            embeddings=embeddings,
             documents=documents,
             metadatas=metadatas,
             ids=ids
@@ -111,14 +80,9 @@ class VectorContextService:
         if self.collection.count() == 0:
             return []
 
-        query_embedding_list = await self._get_embeddings([query_text])
-        if not query_embedding_list:
-            return []
-
-        query_embedding = query_embedding_list[0]
-
+        # No need to embed the query manually. ChromaDB does it for us.
         results = self.collection.query(
-            query_embeddings=[query_embedding],
+            query_texts=[query_text],
             n_results=n_results
         )
 
@@ -133,7 +97,6 @@ class VectorContextService:
         return retrieved_docs
 
     async def reindex_file(self, file_path: Path, content: str):
-        """Deletes old chunks for a file and indexes the new content."""
         self._ensure_project_loaded()
         relative_path_str = str(file_path.relative_to(self.project_root))
 
@@ -173,21 +136,25 @@ class VectorContextService:
             logger.info(f"No functions or classes found in {relative_path_str}. Nothing new to index.")
             return
 
+        # Use the async add_documents which now implicitly uses HF
         await self.add_documents(documents, metadatas)
         logger.info(f"Successfully re-indexed {len(documents)} chunks for file: {relative_path_str}")
 
-    # --- NEW METHOD FOR FULL PROJECT SCAN ---
     async def reindex_entire_project(self):
-        """Scans the entire project directory, indexing all compatible files."""
         self._ensure_project_loaded()
         logger.info(f"Starting full re-index of project: {self.project_root}")
 
-        self.client.delete_collection(name=self.collection.name)
-        self.collection = self.client.get_or_create_collection(name=self.collection.name)
-        logger.info("Cleared existing collection for a full re-index.")
+        try:
+            self.client.delete_collection(name=self.collection.name)
+            self.collection = self.client.get_or_create_collection(
+                name=self.collection.name,
+                embedding_function=self.embedding_function
+            )
+            logger.info("Cleared existing collection for a full re-index.")
+        except Exception:
+            logger.info("Could not delete collection (it may not exist). Proceeding.")
 
-        ignore_dirs = {'.git', '.venv', 'venv', '__pycache__', 'rag_db', 'node_modules'}
-
+        ignore_dirs = {'.git', '.venv', 'venv', '__pycache__', '.rag_db', 'node_modules'}
         all_files = [p for p in self.project_root.rglob('*') if
                      p.is_file() and not any(part in ignore_dirs for part in p.relative_to(self.project_root).parts)]
 

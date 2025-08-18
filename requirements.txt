@@ -20,3 +20,5 @@ grpcio==1.62.2
 numpy==1.26.4
 GitPython
 gunicorn
+# --- NEW DEPENDENCY FOR HUGGING FACE EMBEDDINGS ---
+sentence-transformers
