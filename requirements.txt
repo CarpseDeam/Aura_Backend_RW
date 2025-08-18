@@ -19,3 +19,4 @@ protobuf==4.25.3
 grpcio==1.62.2
 numpy==1.26.4
 GitPython
+gunicorn
