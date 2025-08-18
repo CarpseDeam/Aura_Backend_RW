@@ -1,4 +1,4 @@
-# src/api/agent.py
+# agent.py
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, status, Query
 from pydantic import BaseModel
 from typing import List, Dict, Any
@@ -64,6 +64,18 @@ async def run_reindex_task_wrapper(
         await vcs.reindex_file(file_path, content)
     except Exception as e:
         print(f"BACKGROUND RE-INDEXING FAILED for {file_path}: {e}")
+
+# --- NEW: Wrapper for the auto-indexing background task ---
+async def run_initial_project_index_wrapper(
+    vcs: VectorContextService, project_path: Path
+):
+    """Wrapper to run the initial, full-project indexing task in the background."""
+    print(f"BACKGROUND: Starting initial project index for {project_path}")
+    try:
+        await vcs.reindex_entire_project()
+        print(f"BACKGROUND: Successfully completed initial project index for {project_path}")
+    except Exception as e:
+        print(f"BACKGROUND INITIAL INDEX FAILED for {project_path}: {e}")
 
 
 router = APIRouter(
@@ -196,6 +208,40 @@ async def create_new_project(
         raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create project: {e}")
+
+# --- NEW ENDPOINT FOR AUTO-INDEXING ---
+@router.post("/{project_name}/load", status_code=status.HTTP_200_OK)
+async def load_project_and_auto_index(
+    project_name: str,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    aura_services: ServiceManager = Depends(get_aura_services)
+):
+    """
+    Loads a project and triggers a one-time, automatic background index
+    if the project's vector database is empty.
+    """
+    project_manager: ProjectManager = aura_services.get_project_manager()
+    project_path_str = project_manager.load_project(project_name)
+    if not project_path_str:
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found.")
+
+    project_path = Path(project_path_str)
+    vcs: VectorContextService = aura_services.vector_context_service
+    message = f"Project '{project_name}' loaded successfully."
+
+    if vcs:
+        vcs.load_for_project(project_path)
+        # Check if the collection is empty.
+        if vcs.collection and vcs.collection.count() == 0:
+            message += " Initial project scan for AI context has been started in the background."
+            background_tasks.add_task(
+                run_initial_project_index_wrapper,
+                vcs=vcs,
+                project_path=project_path
+            )
+
+    return {"message": message}
 
 
 @router.delete("/{project_name}", status_code=status.HTTP_204_NO_CONTENT)

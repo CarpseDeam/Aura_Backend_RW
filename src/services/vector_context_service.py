@@ -1,4 +1,4 @@
-# src/services/vector_context_service.py
+# VectorContextService.py
 import logging
 import openai
 import chromadb
@@ -33,7 +33,8 @@ class VectorContextService:
         self.project_root = project_path
 
         if settings.CHROMA_SERVER_HOST and settings.CHROMA_SERVER_PORT:
-            logger.info(f"Connecting to remote ChromaDB server at {settings.CHROMA_SERVER_HOST}:{settings.CHROMA_SERVER_PORT}")
+            logger.info(
+                f"Connecting to remote ChromaDB server at {settings.CHROMA_SERVER_HOST}:{settings.CHROMA_SERVER_PORT}")
             self.client = chromadb.HttpClient(
                 host=settings.CHROMA_SERVER_HOST,
                 port=settings.CHROMA_SERVER_PORT,
@@ -178,3 +179,27 @@ class VectorContextService:
 
         await self.add_documents(documents, metadatas)
         logger.info(f"Successfully re-indexed {len(documents)} chunks for file: {relative_path_str}")
+
+    # --- NEW METHOD FOR FULL PROJECT SCAN ---
+    async def reindex_entire_project(self):
+        """Scans the entire project directory, indexing all compatible files."""
+        self._ensure_project_loaded()
+        logger.info(f"Starting full re-index of project: {self.project_root}")
+
+        self.client.delete_collection(name=self.collection.name)
+        self.collection = self.client.get_or_create_collection(name=self.collection.name)
+        logger.info("Cleared existing collection for a full re-index.")
+
+        ignore_dirs = {'.git', '.venv', 'venv', '__pycache__', 'rag_db', 'node_modules'}
+
+        all_files = [p for p in self.project_root.rglob('*') if
+                     p.is_file() and not any(part in ignore_dirs for part in p.relative_to(self.project_root).parts)]
+
+        for file_path in all_files:
+            try:
+                content = file_path.read_text(encoding='utf-8')
+                await self.reindex_file(file_path, content)
+            except Exception as e:
+                logger.warning(f"Could not read or process file {file_path} during full re-index: {e}")
+
+        logger.info(f"Full project re-index complete. Collection now has {self.collection.count()} items.")
