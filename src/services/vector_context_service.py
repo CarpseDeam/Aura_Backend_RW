@@ -9,6 +9,7 @@ from src.db import crud
 from pathlib import Path
 import ast
 from .chunking_service import ChunkingService
+from src.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -24,17 +25,33 @@ class VectorContextService:
         self.openai_client = None
 
     def load_for_project(self, project_path: Path):
-        """Loads or creates the vector database for a specific project."""
+        """
+        Loads or creates the vector database for a specific project.
+        Connects to a remote ChromaDB server if host and port are configured,
+        otherwise falls back to a local, file-based database.
+        """
         self.project_root = project_path
-        rag_db_path = project_path / ".rag_db"
-        logger.info(f"Loading vector database for project at: {rag_db_path}")
 
-        self.client = chromadb.PersistentClient(
-            path=str(rag_db_path),
-            settings=Settings(anonymized_telemetry=False)
-        )
+        if settings.CHROMA_SERVER_HOST and settings.CHROMA_SERVER_PORT:
+            logger.info(f"Connecting to remote ChromaDB server at {settings.CHROMA_SERVER_HOST}:{settings.CHROMA_SERVER_PORT}")
+            self.client = chromadb.HttpClient(
+                host=settings.CHROMA_SERVER_HOST,
+                port=settings.CHROMA_SERVER_PORT,
+                settings=Settings(anonymized_telemetry=False)
+            )
+        else:
+            rag_db_path = project_path / ".rag_db"
+            logger.info(f"Using local file-based vector database for project at: {rag_db_path}")
+            self.client = chromadb.PersistentClient(
+                path=str(rag_db_path),
+                settings=Settings(anonymized_telemetry=False)
+            )
+
+        # Make collection name unique per user and project to prevent collisions on a shared server
+        collection_name = f"aura_project_{self.user_id}_{project_path.name.replace(' ', '_').replace('.', '_')}"
+
         self.collection = self.client.get_or_create_collection(
-            name=f"aura_project_{project_path.name.replace(' ', '_')}",
+            name=collection_name,
             metadata={"hnsw:space": "cosine"}
         )
         logger.info(f"Vector database loaded. Collection '{self.collection.name}' has {self.collection.count()} items.")
