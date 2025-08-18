@@ -26,19 +26,16 @@ class Settings(BaseSettings):
         BETA_ACCESS_KEY (str): A secret key required for new user registration.
         ALGORITHM (str): The algorithm to use for JWT encoding (e.g., "HS256").
         ACCESS_TOKEN_EXPIRE_MINUTES (int): The lifetime of an access token in minutes.
-        CHROMA_SERVER_HOST (Optional[str]): The hostname for a remote ChromaDB server. If set, disables local file-based RAG.
-        CHROMA_SERVER_PORT (Optional[int]): The port for a remote ChromaDB server.
     """
     DATABASE_URL: str
     JWT_SECRET_KEY: str
     ENCRYPTION_KEY: str
-    BETA_ACCESS_KEY: str  # <-- NEW: The required beta key
+    BETA_ACCESS_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
-    # --- NEW: Optional settings for connecting to a remote vector database ---
-    CHROMA_SERVER_HOST: Optional[str] = None
-    CHROMA_SERVER_PORT: Optional[int] = None
+    # The CHROMA_SERVER_HOST and CHROMA_SERVER_PORT settings have been removed
+    # as the RAG database is now co-located with the backend service.
 
     # THIS IS THE FIX: Explicitly disable .env file loading.
     # This forces Pydantic to ONLY use environment variables, which is
@@ -68,8 +65,5 @@ except ValidationError as e:
     print("- JWT_SECRET_KEY", file=sys.stderr)
     print("- ENCRYPTION_KEY", file=sys.stderr)
     print("- BETA_ACCESS_KEY", file=sys.stderr)
-    print("\nOptionally, for remote RAG:", file=sys.stderr)
-    print("- CHROMA_SERVER_HOST", file=sys.stderr)
-    print("- CHROMA_SERVER_PORT", file=sys.stderr)
     print("="*80, file=sys.stderr)
     sys.exit(1) # Exit with a failure code to make the crash obvious.
