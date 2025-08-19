@@ -13,7 +13,7 @@ from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
 from src.prompts.creative import AURA_PLANNER_PROMPT, AURA_REPLANNER_PROMPT, AURA_MISSION_SUMMARY_PROMPT
 from src.prompts.coder import CODER_PROMPT_STREAMING
-from src.prompts.master_rules import SENIOR_ARCHITECT_HEURISTIC_RULE, TYPE_HINTING_RULE, DOCSTRING_RULE, CLEAN_CODE_RULE, MAESTRO_CODER_PHILOSOPHY_RULE
+from src.prompts.master_rules import SENIOR_ARCHITECT_HEURISTIC_RULE, TYPE_HINTING_RULE, DOCSTRING_RULE, CLEAN_CODE_RULE, MAESTRO_CODER_PHILOSOPHY_RULE, RAW_CODE_OUTPUT_RULE
 from src.prompts.companion import COMPANION_PROMPT
 from src.db import crud
 
@@ -208,18 +208,23 @@ class DevelopmentTeamService:
             return
 
         try:
-            # The AI now returns a structured JSON object with a self-critique
             plan_data = self._parse_json_response(response_str)
 
-            # We log the critique for debugging and insight, but only use the final plan
-            draft = plan_data.get("draft_plan", [])
             critique = plan_data.get("critique", "No critique provided.")
             final_plan = plan_data.get("final_plan", [])
+            dependencies = plan_data.get("dependencies", [])
 
             self.log("info", f"Aura's Self-Critique: {critique}")
 
             if not final_plan:
                 raise ValueError("Aura's final_plan was empty after self-critique.")
+
+            # If the plan includes dependencies, prepend a task to add them
+            if dependencies:
+                deps_str = ", ".join(dependencies)
+                # This task will be handled by the Conductor, which will call the `add_dependency_to_requirements` tool
+                final_plan.insert(0, f"Add the following dependencies to requirements.txt: {deps_str}")
+
 
             await self.mission_log_service.set_initial_plan(user_id, final_plan, user_idea)
             await self._post_chat_message(user_id, "Aura",
@@ -228,21 +233,57 @@ class DevelopmentTeamService:
             await self.handle_error(user_id, "Aura", f"Failed to create a valid plan: {e}.")
             self.log("error", f"Aura planner failure for user {user_id}. Raw response: {response_str}")
 
-    async def _generate_code_for_task(self, user_id: str, path: str, task_description: str, user_idea: str) -> str:
+    def _get_relevant_plan_context(self, current_task_id: int, full_plan: List[Dict]) -> str:
+        """Assembles a small, relevant context snippet from the full mission plan."""
+        context_lines = []
+        current_task_index = -1
+
+        for i, task in enumerate(full_plan):
+            if task.get('id') == current_task_id:
+                current_task_index = i
+                break
+
+        if current_task_index == -1:
+            return "Could not find the current task in the plan."
+
+        # Add the task before
+        if current_task_index > 0:
+            prev_task = full_plan[current_task_index - 1]
+            context_lines.append(f"Previous Task (ID {prev_task['id']}): {prev_task['description']} [Status: {'Done' if prev_task['done'] else 'Pending'}]")
+
+        # Add the current task
+        current_task = full_plan[current_task_index]
+        context_lines.append(f"--> CURRENT TASK (ID {current_task['id']}): {current_task['description']} [Status: Pending]")
+
+        # Add the task after
+        if current_task_index < len(full_plan) - 1:
+            next_task = full_plan[current_task_index + 1]
+            context_lines.append(f"Next Task (ID {next_task['id']}): {next_task['description']} [Status: Pending]")
+
+        return "\n".join(context_lines)
+
+
+    async def _generate_code_for_task(self, user_id: str, path: str, task_description: str, user_idea: str, current_task_id: int) -> str:
         """Dedicated method to invoke the Coder AI to generate code for a file."""
         self.log("info", f"Generating code for '{path}'...")
         file_tree = "\n".join(
             sorted(self.project_manager.get_project_files().keys())) or "The project is currently empty."
+
+        # Assemble the lean, just-in-time context for the Coder
+        full_plan = self.mission_log_service.get_tasks()
+        relevant_plan_context = self._get_relevant_plan_context(current_task_id, full_plan)
 
         prompt = CODER_PROMPT_STREAMING.format(
             path=path,
             task_description=task_description,
             file_tree=file_tree,
             user_idea=user_idea,
+            relevant_plan_context=relevant_plan_context,
             MAESTRO_CODER_PHILOSOPHY_RULE=MAESTRO_CODER_PHILOSOPHY_RULE.strip(),
             TYPE_HINTING_RULE=TYPE_HINTING_RULE.strip(),
             DOCSTRING_RULE=DOCSTRING_RULE.strip(),
-            CLEAN_CODE_RULE=CLEAN_CODE_RULE.strip()
+            CLEAN_CODE_RULE=CLEAN_CODE_RULE.strip(),
+            RAW_CODE_OUTPUT_RULE=RAW_CODE_OUTPUT_RULE.strip()
         )
         messages = [{"role": "user", "content": prompt}]
 
