@@ -4,19 +4,13 @@ from pathlib import Path
 from typing import Optional, Any, TYPE_CHECKING
 import inspect
 import asyncio
-import copy
 
 from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
 from src.foundry import FoundryManager, BlueprintInvocation
-from .mission_log_service import MissionLogService
-from .vector_context_service import VectorContextService
-from src.events import ToolCallInitiated, ToolCallCompleted, RefreshFileTree
 
 if TYPE_CHECKING:
-    from src.core.managers import ProjectManager, ProjectContext
-    from src.core.llm_client import LLMClient
-    from .development_team_service import DevelopmentTeamService
+    from src.core.managers import ServiceManager
 
 logger = logging.getLogger(__name__)
 
@@ -30,20 +24,18 @@ class ToolRunnerService:
     def __init__(
             self,
             event_bus: EventBus,
-            foundry_manager: FoundryManager,
-            project_manager: "ProjectManager",
-            mission_log_service: MissionLogService,
-            vector_context_service: Optional[VectorContextService] = None,
-            development_team_service: Optional["DevelopmentTeamService"] = None,
-            llm_client: Optional["LLMClient"] = None
+            service_manager: "ServiceManager"
     ):
         self.event_bus = event_bus
-        self.foundry_manager = foundry_manager
-        self.project_manager = project_manager
-        self.mission_log_service = mission_log_service
-        self.vector_context_service = vector_context_service
-        self.development_team_service = development_team_service
-        self.llm_client = llm_client
+        # --- REFACTOR: Get dependencies from the manager ---
+        self.service_manager = service_manager
+        self.foundry_manager = service_manager.foundry_manager
+        self.project_manager = service_manager.project_manager
+        self.mission_log_service = service_manager.mission_log_service
+        self.vector_context_service = service_manager.vector_context_service
+        self.development_team_service = service_manager.development_team_service
+        self.llm_client = service_manager.llm_client
+        # --- End Refactor ---
 
         self.PATH_PARAM_KEYS = ['path', 'source_path', 'destination_path', 'requirements_path']
         self.FILESYSTEM_TOOLS = [
@@ -58,6 +50,7 @@ class ToolRunnerService:
         Dynamically creates the service map to ensure it always has the latest
         service instances, especially after a project change.
         """
+        # --- REFACTOR: Use the already-injected services ---
         return {
             'project_manager': self.project_manager,
             'mission_log_service': self.mission_log_service,

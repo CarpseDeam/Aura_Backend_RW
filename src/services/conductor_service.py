@@ -2,22 +2,15 @@
 import logging
 import asyncio
 import json
-import re
 from typing import Dict, Optional, List, Any, TYPE_CHECKING
-from sqlalchemy.orm import Session
 
 from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
-from .mission_log_service import MissionLogService
-from .tool_runner_service import ToolRunnerService
-from .development_team_service import DevelopmentTeamService
 from src.prompts.coder import CODER_PROMPT
-from src.prompts.master_rules import JSON_OUTPUT_RULE
-from src.db import crud
 
 if TYPE_CHECKING:
-    from src.foundry import FoundryManager
-    from src.core.llm_client import LLMClient
+    from src.core.managers import ServiceManager
+
 
 logger = logging.getLogger(__name__)
 
@@ -25,35 +18,35 @@ logger = logging.getLogger(__name__)
 class ConductorService:
     """
     Orchestrates the execution of a mission by looping through tasks, handling
-    failures with a two-tiered correction system (retry and re-plan), and now
-    directly determining the tool call for each step.
+    failures with a two-tiered correction system (retry and re-plan), and
+    determining the tool call for each step.
     """
     MAX_RETRIES_PER_TASK = 1
 
     def __init__(
             self,
             event_bus: EventBus,
-            mission_log_service: MissionLogService,
-            tool_runner_service: ToolRunnerService,
-            development_team_service: DevelopmentTeamService,
-            foundry_manager: "FoundryManager",
-            llm_client: "LLMClient",
-            db_session: Session
+            service_manager: "ServiceManager"
     ):
         self.event_bus = event_bus
-        self.mission_log_service = mission_log_service
-        self.tool_runner_service = tool_runner_service
-        self.development_team_service = development_team_service
-        self.foundry_manager = foundry_manager
-        self.llm_client = llm_client
-        self.db = db_session
+        # --- REFACTOR: Get dependencies from the manager ---
+        self.service_manager = service_manager
+        self.mission_log_service = service_manager.mission_log_service
+        self.tool_runner_service = service_manager.tool_runner_service
+        self.development_team_service = service_manager.development_team_service
+        self.foundry_manager = service_manager.foundry_manager
+        self.llm_client = service_manager.llm_client
+        self.db = service_manager.db
+        # --- End Refactor ---
+
         self.is_mission_active = False
         self.original_user_goal = ""
         logger.info("ConductorService initialized.")
 
+
     async def _get_tool_call_for_task(self, user_id: str, task: Dict[str, Any], last_error: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
-        The new "brain" of the Conductor. It uses the LLM to translate a task
+        The "brain" of the Conductor. It uses the LLM to translate a task
         into a single, executable tool call.
         """
         current_task_description = task['description']
