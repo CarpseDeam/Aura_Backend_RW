@@ -52,18 +52,17 @@ async def websocket_endpoint(
         user: models.User = Depends(get_current_user_ws)
 ):
     """
-    Handles WebSocket connections, now using a query-param-aware authenticator.
-    The client_id is now hardcoded for our single-page app context.
+    Handles WebSocket connections, now with a heartbeat mechanism to prevent
+    idle timeouts from network infrastructure.
     """
     if not user:
         return
 
     user_id = str(user.id)
-    client_id = "command_deck"  # Use a consistent ID for the main app
+    client_id = "command_deck"
     await websocket_manager.connect(websocket, user_id, client_id)
 
     try:
-        # Send a connection confirmation message
         await websocket_manager.send_to_client(
             {"type": "internal_ws_status", "content": "connected"}, user_id, client_id
         )
@@ -71,21 +70,21 @@ async def websocket_endpoint(
         while True:
             data_text = await websocket.receive_text()
             try:
-                # Handle client-side ping to keep connection alive
+                # --- THE FIX: Heartbeat Handling ---
+                # The frontend will send `{"type": "ping"}` periodically.
+                # We catch it, do nothing, and continue listening.
+                # This keeps the connection alive.
                 data = json.loads(data_text)
                 if data.get("type") == "ping":
-                    continue  # Silently ignore pings and don't echo
+                    continue
             except json.JSONDecodeError:
                 # Not a JSON message, just log it and ignore
                 print(f"Received non-JSON message from User '{user_id}': {data_text}")
                 continue
 
             # In production, we don't need to echo messages back.
-            # The backend will proactively send updates. This can be removed later.
+            # This can be removed later.
             print(f"Received message from User '{user_id}', Client '{client_id}': {data_text}")
-            # await websocket_manager.send_to_client(
-            #     {"sender": "Aura", "message": f"Acknowledged: {data_text}"}, user_id, client_id
-            # )
 
     except WebSocketDisconnect:
         websocket_manager.disconnect(user_id, client_id)
