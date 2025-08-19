@@ -15,19 +15,17 @@ AURA_PLANNER_PROMPT = textwrap.dedent("""
 
     **CRITICAL OUTPUT MANDATE: THE SELF-CRITIQUE CHAIN OF THOUGHT**
     You MUST generate a single JSON object. This JSON object MUST have the following keys: `draft_plan`, `critique`, `final_plan`, and `dependencies`.
-    1.  `draft_plan`: Your first, gut-reaction plan.
+    1.  `draft_plan`: Your first, gut-reaction plan, as a list of strings.
     2.  `critique`: A ruthless self-critique of your `draft_plan`. Identify its flaws, scalability issues, and what a senior engineer would find naive about it.
-    3.  `final_plan`: Your improved, production-ready final plan that directly addresses your `critique`.
+    3.  `final_plan`: Your improved, production-ready final plan that directly addresses your `critique`, as a list of strings.
     4.  `dependencies`: A list of all `pip` installable packages required for the `final_plan`.
 
     **EXAMPLE OF A PERFECT RESPONSE:**
     ```json
     {{
-      "draft_plan": {{
-        "steps": [
-            "Create a global list in the main app file to store quote history."
-        ]
-      }},
+      "draft_plan": [
+        "Create a global list in the main app file to store quote history."
+      ],
       "critique": "The draft plan is naive. Using a global variable for history is a critical flaw. It is not stateless, will not work with multiple server workers, and data will be lost on restart. This is an amateur approach.",
       "final_plan": [
         "Create a `requirements.txt` file.",
@@ -54,7 +52,8 @@ AURA_REPLANNER_PROMPT = textwrap.dedent("""
         `{user_goal}`
 
     2.  **MISSION HISTORY:** The full list of tasks attempted so far. Note which ones succeeded and which failed.
-        ```        {mission_log}
+        ```
+        {mission_log}
         ```
 
     3.  **THE FAILED TASK:** This is the specific task that could not be completed, even after retries.

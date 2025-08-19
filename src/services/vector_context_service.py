@@ -1,4 +1,4 @@
-# VectorContextService.py
+# src/services/vector_context_service.py
 import logging
 import chromadb
 from chromadb.config import Settings

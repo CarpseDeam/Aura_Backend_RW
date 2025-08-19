@@ -227,20 +227,25 @@ class DevelopmentTeamService:
             plan_data = self._parse_json_response(response_str)
 
             critique = plan_data.get("critique", "No critique provided.")
-            final_plan = plan_data.get("final_plan", [])
             dependencies = plan_data.get("dependencies", [])
-
             self.log("info", f"Aura's Self-Critique: {critique}")
 
+            # --- THE FIX: Defensively handle the plan data ---
+            final_plan_data = plan_data.get("final_plan", [])
+            if isinstance(final_plan_data, dict) and "steps" in final_plan_data:
+                final_plan = final_plan_data["steps"]
+            elif isinstance(final_plan_data, list):
+                final_plan = final_plan_data
+            else:
+                final_plan = []
+
             if not final_plan:
-                raise ValueError("Aura's final_plan was empty after self-critique.")
+                raise ValueError("Aura's final_plan was empty or malformed after self-critique.")
 
             # If the plan includes dependencies, prepend a task to add them
             if dependencies:
                 deps_str = ", ".join(dependencies)
-                # This task will be handled by the Conductor, which will call the `add_dependency_to_requirements` tool
                 final_plan.insert(0, f"Add the following dependencies to requirements.txt: {deps_str}")
-
 
             await self.mission_log_service.set_initial_plan(user_id, final_plan, user_idea)
             await self._post_chat_message(user_id, "Aura",
