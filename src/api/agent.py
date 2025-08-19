@@ -16,7 +16,7 @@ from src.api.auth import get_current_user
 
 # --- THE FIX: A completely robust wrapper for the planner task ---
 async def run_planner_task_wrapper(
-        services: ServiceManager, user_id: int, user_idea: str, history: List[Dict[str, Any]]
+        services: ServiceManager, user_id: int, project_name: str, user_idea: str, history: List[Dict[str, Any]]
 ):
     """
     Creates a new DB session and re-hydrates the entire service stack for the
@@ -25,6 +25,10 @@ async def run_planner_task_wrapper(
     db = None
     try:
         db = rehydrate_services_for_background_task(services, user_id)
+        # --- CRITICAL FIX: Ensure the background task has the correct project context ---
+        services.project_manager.load_project(project_name)
+        services.mission_log_service.load_log_for_active_project()
+
         await services.development_team_service.run_aura_planner_workflow(
             user_id=str(user_id), user_idea=user_idea, conversation_history=history
         )
@@ -149,8 +153,9 @@ async def generate_agent_plan(
 
     background_tasks.add_task(
         run_planner_task_wrapper,
-        services=aura_services, # Pass the whole service manager
+        services=aura_services,
         user_id=current_user.id,
+        project_name=request.project_name,
         user_idea=request.prompt,
         history=request.history
     )

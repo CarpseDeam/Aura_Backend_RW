@@ -41,6 +41,7 @@ class MissionLogService:
         """Saves the current list of tasks to disk."""
         log_path = self._get_log_path()
         if not log_path:
+            logger.warning("Attempted to save mission log, but no active project path is set.")
             return
 
         data_to_save = {
@@ -112,17 +113,15 @@ class MissionLogService:
         self._initial_user_goal = user_goal
 
         for step in plan_steps:
-            await self.add_task(user_id=user_id, description=step, notify=False)
+            # Use the internal method to avoid repeated saves and notifications
+            self._add_task_internal(description=step)
 
         self._save_log_to_disk()
         await self._notify_ui(user_id)
         logger.info(f"Initial plan with {len(self.tasks)} steps has been set for user {user_id}.")
 
-    async def add_task(self, user_id: str, description: str, tool_call: Optional[Dict] = None, notify: bool = True) -> \
-    Dict[str, Any]:
-        """Adds a new task to the mission log."""
-        if not description:
-            raise ValueError("Task description cannot be empty.")
+    def _add_task_internal(self, description: str, tool_call: Optional[Dict] = None) -> Dict[str, Any]:
+        """Internal method to add a task without saving or notifying."""
         new_task = {
             "id": self._next_task_id,
             "description": description,
@@ -132,11 +131,17 @@ class MissionLogService:
         }
         self.tasks.append(new_task)
         self._next_task_id += 1
-        logger.info(f"Added task {new_task['id']}: '{description}'")
+        return new_task
 
+    async def add_task(self, user_id: str, description: str, tool_call: Optional[Dict] = None) -> \
+    Dict[str, Any]:
+        """Adds a new task to the mission log, saves, and notifies."""
+        if not description:
+            raise ValueError("Task description cannot be empty.")
+        new_task = self._add_task_internal(description, tool_call)
+        logger.info(f"Added task {new_task['id']}: '{description}'")
         self._save_log_to_disk()
-        if notify:
-            await self._notify_ui(user_id)
+        await self._notify_ui(user_id)
         return new_task
 
     async def mark_task_as_done(self, user_id: str, task_id: int) -> bool:
@@ -186,7 +191,7 @@ class MissionLogService:
         self.tasks = self.tasks[:start_index]
 
         for step in new_plan_steps:
-            await self.add_task(user_id=user_id, description=step, notify=False)
+            self._add_task_internal(description=step)
 
         self._save_log_to_disk()
         await self._notify_ui(user_id)
