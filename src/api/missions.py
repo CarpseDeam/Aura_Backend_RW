@@ -11,7 +11,6 @@ from src.api.auth import get_current_user
 from src.schemas import mission as schemas
 
 router = APIRouter(
-    prefix="/missions",
     tags=["Mission Control"]
 )
 
