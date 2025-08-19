@@ -24,6 +24,8 @@ async def run_planner_task_wrapper(
     """
     db = None
     try:
+        # --- THE FIX: Signal that the background task has started ---
+        await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "thinking"}, str(user_id))
         db = rehydrate_services_for_background_task(services, user_id)
         # --- CRITICAL FIX: Ensure the background task has the correct project context ---
         services.project_manager.load_project(project_name)
@@ -42,6 +44,8 @@ async def run_planner_task_wrapper(
     finally:
         if db:
             db.close()
+        # --- THE FIX: Signal that the background task has finished ---
+        await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "idle"}, str(user_id))
 
 
 # --- THE FIX: A completely robust wrapper for the dispatcher task ---
@@ -52,6 +56,8 @@ async def run_dispatch_task_wrapper(services: ServiceManager, user_id: int):
     """
     db = None
     try:
+        # --- THE FIX: Signal that the background task has started ---
+        await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "thinking"}, str(user_id))
         db = rehydrate_services_for_background_task(services, user_id)
         await services.conductor_service.execute_mission_in_background(user_id=str(user_id))
     except Exception as e:
@@ -64,6 +70,8 @@ async def run_dispatch_task_wrapper(services: ServiceManager, user_id: int):
     finally:
         if db:
             db.close()
+        # --- THE FIX: Signal that the background task has finished ---
+        await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "idle"}, str(user_id))
 
 async def run_reindex_task_wrapper(
     vcs: VectorContextService, file_path: Path, content: str
