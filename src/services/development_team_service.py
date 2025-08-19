@@ -13,7 +13,7 @@ from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
 from src.prompts.creative import AURA_PLANNER_PROMPT, AURA_REPLANNER_PROMPT, AURA_MISSION_SUMMARY_PROMPT
 from src.prompts.coder import CODER_PROMPT_STREAMING
-from src.prompts.master_rules import SENIOR_ARCHITECT_HEURISTIC_RULE, TYPE_HINTING_RULE, DOCSTRING_RULE, CLEAN_CODE_RULE
+from src.prompts.master_rules import SENIOR_ARCHITECT_HEURISTIC_RULE, TYPE_HINTING_RULE, DOCSTRING_RULE, CLEAN_CODE_RULE, MAESTRO_CODER_PHILOSOPHY_RULE
 from src.prompts.companion import COMPANION_PROMPT
 from src.db import crud
 
@@ -208,26 +208,42 @@ class DevelopmentTeamService:
             return
 
         try:
+            # The AI now returns a structured JSON object with a self-critique
             plan_data = self._parse_json_response(response_str)
-            plan_steps = plan_data.get("plan", [])
-            if not plan_steps:
-                raise ValueError("Aura's plan was empty or malformed.")
-            await self.mission_log_service.set_initial_plan(user_id, plan_steps, user_idea)
+
+            # We log the critique for debugging and insight, but only use the final plan
+            draft = plan_data.get("draft_plan", [])
+            critique = plan_data.get("critique", "No critique provided.")
+            final_plan = plan_data.get("final_plan", [])
+
+            self.log("info", f"Aura's Self-Critique: {critique}")
+
+            if not final_plan:
+                raise ValueError("Aura's final_plan was empty after self-critique.")
+
+            await self.mission_log_service.set_initial_plan(user_id, final_plan, user_idea)
             await self._post_chat_message(user_id, "Aura",
-                                          "I've created a plan. Review it in the 'Agent TODO' list and click 'Dispatch Aura' to begin.")
+                                          "I've analyzed the request and created a production-ready plan. Review it in the 'Agent TODO' list and click 'Dispatch Aura' to begin.")
         except (ValueError, json.JSONDecodeError) as e:
             await self.handle_error(user_id, "Aura", f"Failed to create a valid plan: {e}.")
             self.log("error", f"Aura planner failure for user {user_id}. Raw response: {response_str}")
 
-    async def _generate_code_for_task(self, user_id: str, path: str, task_description: str) -> str:
+    async def _generate_code_for_task(self, user_id: str, path: str, task_description: str, user_idea: str) -> str:
         """Dedicated method to invoke the Coder AI to generate code for a file."""
         self.log("info", f"Generating code for '{path}'...")
         file_tree = "\n".join(
             sorted(self.project_manager.get_project_files().keys())) or "The project is currently empty."
+
         prompt = CODER_PROMPT_STREAMING.format(
-            path=path, task_description=task_description, file_tree=file_tree,
-            TYPE_HINTING_RULE=TYPE_HINTING_RULE.strip(), DOCSTRING_RULE=DOCSTRING_RULE.strip(),
-            CLEAN_CODE_RULE=CLEAN_CODE_RULE.strip())
+            path=path,
+            task_description=task_description,
+            file_tree=file_tree,
+            user_idea=user_idea,
+            MAESTRO_CODER_PHILOSOPHY_RULE=MAESTRO_CODER_PHILOSOPHY_RULE.strip(),
+            TYPE_HINTING_RULE=TYPE_HINTING_RULE.strip(),
+            DOCSTRING_RULE=DOCSTRING_RULE.strip(),
+            CLEAN_CODE_RULE=CLEAN_CODE_RULE.strip()
+        )
         messages = [{"role": "user", "content": prompt}]
 
         # Refresh assignments just-in-time
