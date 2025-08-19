@@ -6,7 +6,7 @@ from typing import Dict, Optional, List, Any, TYPE_CHECKING
 
 from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
-from src.prompts.coder import CODER_PROMPT
+from src.prompts import CODER_PROMPT, JSON_OUTPUT_RULE
 
 if TYPE_CHECKING:
     from src.core.managers import ServiceManager
@@ -66,7 +66,8 @@ class ConductorService:
             current_task=current_task_description,
             mission_log=mission_log_history,
             file_structure=file_structure,
-            relevant_code_snippets=vector_context
+            relevant_code_snippets=vector_context,
+            JSON_OUTPUT_RULE=JSON_OUTPUT_RULE.strip()
         )
         messages = [{"role": "user", "content": prompt}]
 
