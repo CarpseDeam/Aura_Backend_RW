@@ -14,7 +14,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# --- THE FIX: A robust, regex-based CORS configuration ---
+# --- THE FINAL FIX: A robust, regex-based CORS configuration ---
 # This pattern allows your main domain, any Vercel preview URLs, and localhost.
 # It's more flexible and less prone to errors than a static list.
 origins_regex = r"https?://(.*\.)?snowballannotation\.com|https?://localhost(:\d+)?|https?://127\.0\.0\.1(:\d+)?|https://.*\.vercel\.app"
