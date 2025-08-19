@@ -1,11 +1,10 @@
-# dependencies.py
 from pathlib import Path
 from fastapi import Depends
 from sqlalchemy.orm import Session
 import os
 from src.event_bus import EventBus
 from src.core.managers import ProjectManager, ServiceManager
-from src.db.database import get_db
+from src.db.database import get_db, SessionLocal
 from src.api.auth import get_current_user
 from src.db.models import User
 from src.services import (
@@ -83,3 +82,30 @@ def get_aura_services(
 
     print(f"✅ Aura services are online and ready for user {user_id}.")
     return services
+
+# --- NEW: A robust function to prepare any ServiceManager for a background task ---
+def rehydrate_services_for_background_task(services: ServiceManager, user_id: int) -> Session:
+    """
+    Takes a ServiceManager instance, creates a new DB session, and injects it
+    into all necessary sub-services to ensure they are alive and correctly scoped
+    for a background thread.
+    """
+    db = SessionLocal()
+    services.db = db
+    services.user_id = user_id
+
+    if services.development_team_service:
+        services.development_team_service.db = db
+        services.development_team_service.user_id = user_id
+        services.development_team_service.refresh_llm_assignments()
+
+    if services.conductor_service:
+        services.conductor_service.db = db
+        services.conductor_service.user_id = user_id
+
+    if services.vector_context_service:
+        services.vector_context_service.db_session = db
+        services.vector_context_service.user_id = user_id
+
+    print(f"🔄 Services re-hydrated for background task for user {user_id}.")
+    return db

@@ -6,35 +6,29 @@ from pathlib import Path
 import traceback
 from src.core.websockets import websocket_manager
 
-from src.dependencies import get_aura_services, get_project_manager
+# --- THE FIX: Import the new rehydration function ---
+from src.dependencies import get_aura_services, get_project_manager, rehydrate_services_for_background_task
 from src.core.managers import ServiceManager, ProjectManager
 from src.services import DevelopmentTeamService, ConductorService, MissionLogService, VectorContextService
 from src.db.models import User
 from src.api.auth import get_current_user
-from src.db.database import SessionLocal
 
 
-# --- THE FIX: A more robust wrapper with comprehensive error handling ---
+# --- THE FIX: A completely robust wrapper for the planner task ---
 async def run_planner_task_wrapper(
-        dev_team_service: DevelopmentTeamService, user_id: int, user_idea: str, history: List[Dict[str, Any]]
+        services: ServiceManager, user_id: int, user_idea: str, history: List[Dict[str, Any]]
 ):
     """
-    This wrapper creates a new DB session specifically for the background task,
-    ensuring it doesn't use the closed session from the original request.
-    It now includes robust error handling to prevent silent failures.
+    Creates a new DB session and re-hydrates the entire service stack for the
+    background planner task. Includes comprehensive error reporting.
     """
-    db = SessionLocal()
+    db = None
     try:
-        # Re-hydrate the service with a live DB session and correct user ID
-        dev_team_service.db = db
-        dev_team_service.user_id = user_id
-        dev_team_service.refresh_llm_assignments() # Load fresh model assignments
-
-        await dev_team_service.run_aura_planner_workflow(
+        db = rehydrate_services_for_background_task(services, user_id)
+        await services.development_team_service.run_aura_planner_workflow(
             user_id=str(user_id), user_idea=user_idea, conversation_history=history
         )
     except Exception as e:
-        # CRITICAL: This block breaks the silence if the background task fails.
         error_message = f"A critical error occurred while generating the plan: {e}"
         print(f"FATAL ERROR in planner background task for user {user_id}: {e}")
         traceback.print_exc()
@@ -42,35 +36,21 @@ async def run_planner_task_wrapper(
             "type": "system_log", "content": error_message
         }, str(user_id))
     finally:
-        db.close()
+        if db:
+            db.close()
 
 
-# --- THE FIX: A more robust wrapper with comprehensive error handling ---
-async def run_dispatch_task_wrapper(conductor_service: ConductorService, user_id: int):
+# --- THE FIX: A completely robust wrapper for the dispatcher task ---
+async def run_dispatch_task_wrapper(services: ServiceManager, user_id: int):
     """
-    Creates a new DB session and fully re-hydrates the entire service stack
-    that the Conductor will use during its long-running execution.
-    It now includes robust error handling to prevent silent failures.
+    Creates a new DB session and re-hydrates the entire service stack for the
+    background dispatcher task. Includes comprehensive error reporting.
     """
-    db = SessionLocal()
+    db = None
     try:
-        # Re-hydrate all services that will be used in the background loop
-        dev_team_service = conductor_service.development_team_service
-        dev_team_service.db = db
-        dev_team_service.user_id = user_id
-        dev_team_service.refresh_llm_assignments() # Load fresh model assignments
-
-        conductor_service.db = db
-        conductor_service.user_id = user_id
-
-        tool_runner_service = conductor_service.tool_runner_service
-        if tool_runner_service and tool_runner_service.vector_context_service:
-            tool_runner_service.vector_context_service.db_session = db
-            tool_runner_service.vector_context_service.user_id = user_id
-
-        await conductor_service.execute_mission_in_background(user_id=str(user_id))
+        db = rehydrate_services_for_background_task(services, user_id)
+        await services.conductor_service.execute_mission_in_background(user_id=str(user_id))
     except Exception as e:
-        # CRITICAL: This block breaks the silence if the background task fails.
         error_message = f"A critical error occurred during mission execution: {e}"
         print(f"FATAL ERROR in dispatcher background task for user {user_id}: {e}")
         traceback.print_exc()
@@ -78,7 +58,8 @@ async def run_dispatch_task_wrapper(conductor_service: ConductorService, user_id
             "type": "system_log", "content": error_message
         }, str(user_id))
     finally:
-        db.close()
+        if db:
+            db.close()
 
 async def run_reindex_task_wrapper(
     vcs: VectorContextService, file_path: Path, content: str
@@ -133,7 +114,7 @@ async def agent_chat(
         current_user: User = Depends(get_current_user),
         aura_services: ServiceManager = Depends(get_aura_services)
 ):
-    dev_team: DevelopmentTeamService = aura_services.get_development_team_service()
+    dev_team: DevelopmentTeamService = aura_services.development_team_service
     response_text = await dev_team.run_companion_chat(
         user_id=str(current_user.id),
         user_prompt=request.prompt,
@@ -149,8 +130,7 @@ async def generate_agent_plan(
         current_user: User = Depends(get_current_user),
         aura_services: ServiceManager = Depends(get_aura_services)
 ):
-    dev_team: DevelopmentTeamService = aura_services.get_development_team_service()
-    project_manager: ProjectManager = aura_services.get_project_manager()
+    project_manager: ProjectManager = aura_services.project_manager
     mission_log_service: MissionLogService = aura_services.mission_log_service
 
     try:
@@ -169,7 +149,7 @@ async def generate_agent_plan(
 
     background_tasks.add_task(
         run_planner_task_wrapper,
-        dev_team_service=dev_team,
+        services=aura_services, # Pass the whole service manager
         user_id=current_user.id,
         user_idea=request.prompt,
         history=request.history
@@ -184,8 +164,7 @@ async def dispatch_agent_mission(
         current_user: User = Depends(get_current_user),
         aura_services: ServiceManager = Depends(get_aura_services)
 ):
-    conductor: ConductorService = aura_services.conductor_service
-    project_manager: ProjectManager = aura_services.get_project_manager()
+    project_manager: ProjectManager = aura_services.project_manager
     mission_log_service: MissionLogService = aura_services.mission_log_service
 
     project_path = project_manager.load_project(request.project_name)
@@ -200,7 +179,7 @@ async def dispatch_agent_mission(
 
     background_tasks.add_task(
         run_dispatch_task_wrapper,
-        conductor_service=conductor,
+        services=aura_services, # Pass the whole service manager
         user_id=current_user.id
     )
     return {"message": "Dispatch acknowledged. Aura is now executing the mission plan."}
@@ -241,7 +220,7 @@ async def load_project_and_auto_index(
     Loads a project and triggers a one-time, automatic background index
     if the project's vector database is empty.
     """
-    project_manager: ProjectManager = aura_services.get_project_manager()
+    project_manager: ProjectManager = aura_services.project_manager
     project_path_str = project_manager.load_project(project_name)
     if not project_path_str:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found.")
@@ -315,7 +294,7 @@ async def write_project_file_content(
     current_user: User = Depends(get_current_user),
     aura_services: ServiceManager = Depends(get_aura_services)
 ):
-    project_manager: ProjectManager = aura_services.get_project_manager()
+    project_manager: ProjectManager = aura_services.project_manager
     project_path_str = project_manager.load_project(project_name)
     if not project_path_str:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found.")
