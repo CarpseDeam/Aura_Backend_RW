@@ -5,11 +5,12 @@ venv/
 # Ignore Python cache files
 __pycache__/
 *.pyc
+*.pyo
 
 # Ignore Git directory
 .git/
 
-# Ignore user-generated workspaces
+# Ignore user-generated workspaces and projects (CRITICAL for web server)
 workspaces/
 projects/
 
@@ -17,6 +18,7 @@ projects/
 *.db
 *.sqlite3
 *.log
+.rag_db/
 
 # Ignore IDE/editor configuration
 .idea/
@@ -24,3 +26,6 @@ projects/
 
 # Ignore testing caches
 .pytest_cache/
+
+# Ignore environment files
+.env

@@ -3,8 +3,10 @@ from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, status, 
 from pydantic import BaseModel
 from typing import List, Dict, Any
 from pathlib import Path
+import traceback
+from src.core.websockets import websocket_manager
 
-from src.dependencies import get_aura_services
+from src.dependencies import get_aura_services, get_project_manager
 from src.core.managers import ServiceManager, ProjectManager
 from src.services import DevelopmentTeamService, ConductorService, MissionLogService, VectorContextService
 from src.db.models import User
@@ -12,33 +14,43 @@ from src.api.auth import get_current_user
 from src.db.database import SessionLocal
 
 
-# --- Wrapper for the planner background task ---
+# --- THE FIX: A more robust wrapper with comprehensive error handling ---
 async def run_planner_task_wrapper(
         dev_team_service: DevelopmentTeamService, user_id: int, user_idea: str, history: List[Dict[str, Any]]
 ):
     """
     This wrapper creates a new DB session specifically for the background task,
     ensuring it doesn't use the closed session from the original request.
+    It now includes robust error handling to prevent silent failures.
     """
     db = SessionLocal()
     try:
         # Re-hydrate the service with a live DB session and correct user ID
         dev_team_service.db = db
         dev_team_service.user_id = user_id
+        dev_team_service.refresh_llm_assignments() # Load fresh model assignments
+
         await dev_team_service.run_aura_planner_workflow(
             user_id=str(user_id), user_idea=user_idea, conversation_history=history
         )
+    except Exception as e:
+        # CRITICAL: This block breaks the silence if the background task fails.
+        error_message = f"A critical error occurred while generating the plan: {e}"
+        print(f"FATAL ERROR in planner background task for user {user_id}: {e}")
+        traceback.print_exc()
+        await websocket_manager.broadcast_to_user({
+            "type": "system_log", "content": error_message
+        }, str(user_id))
     finally:
         db.close()
 
 
-# --- THE FINAL, ROBUST FIX for the dispatcher background task ---
+# --- THE FIX: A more robust wrapper with comprehensive error handling ---
 async def run_dispatch_task_wrapper(conductor_service: ConductorService, user_id: int):
     """
     Creates a new DB session and fully re-hydrates the entire service stack
-    that the Conductor will use during its long-running execution. This prevents
-    any service from using a stale DB session or incorrect user context from the
-    original web request.
+    that the Conductor will use during its long-running execution.
+    It now includes robust error handling to prevent silent failures.
     """
     db = SessionLocal()
     try:
@@ -46,6 +58,10 @@ async def run_dispatch_task_wrapper(conductor_service: ConductorService, user_id
         dev_team_service = conductor_service.development_team_service
         dev_team_service.db = db
         dev_team_service.user_id = user_id
+        dev_team_service.refresh_llm_assignments() # Load fresh model assignments
+
+        conductor_service.db = db
+        conductor_service.user_id = user_id
 
         tool_runner_service = conductor_service.tool_runner_service
         if tool_runner_service and tool_runner_service.vector_context_service:
@@ -53,6 +69,14 @@ async def run_dispatch_task_wrapper(conductor_service: ConductorService, user_id
             tool_runner_service.vector_context_service.user_id = user_id
 
         await conductor_service.execute_mission_in_background(user_id=str(user_id))
+    except Exception as e:
+        # CRITICAL: This block breaks the silence if the background task fails.
+        error_message = f"A critical error occurred during mission execution: {e}"
+        print(f"FATAL ERROR in dispatcher background task for user {user_id}: {e}")
+        traceback.print_exc()
+        await websocket_manager.broadcast_to_user({
+            "type": "system_log", "content": error_message
+        }, str(user_id))
     finally:
         db.close()
 
@@ -184,10 +208,8 @@ async def dispatch_agent_mission(
 
 @router.get("/", response_model=List[str])
 async def list_user_projects(
-        current_user: User = Depends(get_current_user),
-        aura_services: ServiceManager = Depends(get_aura_services)
+        project_manager: ProjectManager = Depends(get_project_manager)
 ):
-    project_manager: ProjectManager = aura_services.get_project_manager()
     try:
         return project_manager.list_projects()
     except Exception as e:
@@ -197,10 +219,8 @@ async def list_user_projects(
 @router.post("/{project_name}", status_code=status.HTTP_201_CREATED)
 async def create_new_project(
         project_name: str,
-        current_user: User = Depends(get_current_user),
-        aura_services: ServiceManager = Depends(get_aura_services)
+        project_manager: ProjectManager = Depends(get_project_manager)
 ):
-    project_manager: ProjectManager = aura_services.get_project_manager()
     try:
         project_path = project_manager.new_project(project_name)
         return {"message": "Project created successfully.", "project_path": project_path}
@@ -247,10 +267,8 @@ async def load_project_and_auto_index(
 @router.delete("/{project_name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_existing_project(
         project_name: str,
-        current_user: User = Depends(get_current_user),
-        aura_services: ServiceManager = Depends(get_aura_services)
+        project_manager: ProjectManager = Depends(get_project_manager)
 ):
-    project_manager: ProjectManager = aura_services.get_project_manager()
     try:
         project_manager.delete_project(project_name)
         return None
@@ -265,10 +283,8 @@ async def delete_existing_project(
 @router.get("/workspace/{project_name}/files", response_model=List[Dict[str, Any]])
 async def get_project_file_tree(
         project_name: str,
-        current_user: User = Depends(get_current_user),
-        aura_services: ServiceManager = Depends(get_aura_services)
+        project_manager: ProjectManager = Depends(get_project_manager)
 ):
-    project_manager: ProjectManager = aura_services.get_project_manager()
     project_path = project_manager.load_project(project_name)
     if not project_path:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found.")
@@ -279,10 +295,8 @@ async def get_project_file_tree(
 async def get_project_file_content(
         project_name: str,
         path: str = Query(...),
-        current_user: User = Depends(get_current_user),
-        aura_services: ServiceManager = Depends(get_aura_services)
+        project_manager: ProjectManager = Depends(get_project_manager)
 ):
-    project_manager: ProjectManager = aura_services.get_project_manager()
     project_path = project_manager.load_project(project_name)
     if not project_path:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found.")

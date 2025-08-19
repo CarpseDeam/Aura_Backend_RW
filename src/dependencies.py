@@ -1,3 +1,4 @@
+# dependencies.py
 from pathlib import Path
 from fastapi import Depends
 from sqlalchemy.orm import Session
@@ -22,6 +23,24 @@ foundry_manager = FoundryManager()
 def get_foundry_manager() -> FoundryManager:
     """Dependency to provide the shared FoundryManager instance."""
     return foundry_manager
+
+# --- NEW: A lightweight dependency for simple project management tasks ---
+def get_project_manager(
+    current_user: User = Depends(get_current_user)
+) -> ProjectManager:
+    """
+    Provides a user-specific ProjectManager without initializing the entire
+    heavyweight AI service stack. This is for fast, simple file operations.
+    """
+    user_id = str(current_user.id)
+    persistent_storage_path = Path("/data")
+    user_workspace_path = persistent_storage_path / "workspaces" / user_id
+    os.makedirs(user_workspace_path, exist_ok=True)
+
+    # Note: We pass a dummy EventBus because this manager is short-lived
+    # and not part of the main agentic loop.
+    return ProjectManager(EventBus(), workspace_path=str(user_workspace_path))
+
 
 def get_aura_services(
         current_user: User = Depends(get_current_user),

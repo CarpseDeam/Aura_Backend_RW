@@ -46,11 +46,18 @@ class DevelopmentTeamService:
 
         self.llm_server_url = os.getenv("LLM_SERVER_URL")
 
-        if self.user_id is not None:
-             assignments_from_db = crud.get_assignments_for_user(self.db, user_id=self.user_id)
-             self.llm_client.set_assignments({a.role_name: a.model_id for a in assignments_from_db})
-             self.llm_client.set_temperatures({a.role_name: a.temperature for a in assignments_from_db})
+        # --- THE FIX: REMOVED assignment loading from __init__ to prevent stale data ---
 
+    def refresh_llm_assignments(self):
+        """
+        (RE)Populates the LLM client with the latest model assignments from the DB.
+        This is critical for background tasks that use a new DB session.
+        """
+        if self.user_id is not None and self.db is not None:
+            assignments_from_db = crud.get_assignments_for_user(self.db, user_id=self.user_id)
+            self.llm_client.set_assignments({a.role_name: a.model_id for a in assignments_from_db})
+            self.llm_client.set_temperatures({a.role_name: a.temperature for a in assignments_from_db})
+            print(f"LLM client assignments refreshed for user {self.user_id}.")
 
     async def _make_llm_call(self, user_id: int, role: str, messages: List[Dict[str, Any]],
                              is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> str:
@@ -174,6 +181,8 @@ class DevelopmentTeamService:
 
         messages = [{"role": "user", "content": prompt}]
 
+        # Refresh assignments just-in-time
+        self.refresh_llm_assignments()
         response_str = await self._make_llm_call(int(user_id), "chat", messages, is_json=False)
 
         if response_str.startswith("Error:"):
@@ -189,6 +198,9 @@ class DevelopmentTeamService:
             SENIOR_ARCHITECT_HEURISTIC_RULE=SENIOR_ARCHITECT_HEURISTIC_RULE.strip(),
             conversation_history=history_str, user_idea=user_idea)
         messages = [{"role": "user", "content": prompt}]
+
+        # Refresh assignments just-in-time
+        self.refresh_llm_assignments()
         response_str = await self._make_llm_call(int(user_id), "planner", messages, is_json=True)
 
         if response_str.startswith("Error:"):
@@ -217,6 +229,9 @@ class DevelopmentTeamService:
             TYPE_HINTING_RULE=TYPE_HINTING_RULE.strip(), DOCSTRING_RULE=DOCSTRING_RULE.strip(),
             CLEAN_CODE_RULE=CLEAN_CODE_RULE.strip())
         messages = [{"role": "user", "content": prompt}]
+
+        # Refresh assignments just-in-time
+        self.refresh_llm_assignments()
         return await self._stream_code_to_client_and_accumulate(user_id, "coder", messages, path)
 
     async def run_strategic_replan(self, user_id: str, original_goal: str, failed_task: Dict, mission_log: List[Dict]):
@@ -229,6 +244,9 @@ class DevelopmentTeamService:
             user_goal=original_goal, mission_log=mission_log_str,
             failed_task=failed_task_str, error_message=error_message)
         messages = [{"role": "user", "content": prompt}]
+
+        # Refresh assignments just-in-time
+        self.refresh_llm_assignments()
         response_str = await self._make_llm_call(int(user_id), "planner", messages, is_json=True)
 
         if response_str.startswith("Error:"):
@@ -253,6 +271,9 @@ class DevelopmentTeamService:
             return "Mission accomplished!"
         prompt = AURA_MISSION_SUMMARY_PROMPT.format(completed_tasks=task_descriptions)
         messages = [{"role": "user", "content": prompt}]
+
+        # Refresh assignments just-in-time
+        self.refresh_llm_assignments()
         summary = await self._make_llm_call(int(user_id), "chat", messages)
         return summary.strip() if summary.strip() else "Mission accomplished!"
 
