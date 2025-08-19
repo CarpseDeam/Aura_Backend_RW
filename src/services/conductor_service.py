@@ -86,7 +86,14 @@ class ConductorService:
             if tool_call.get("tool_name") == "write_file":
                 args = tool_call.get("arguments", {})
                 if not args.get("content") and args.get("task_description"):
-                    generated_code = await self.development_team_service._generate_code_for_task(user_id, args.get("path"), args.get("task_description"))
+                    # --- THE FIX: Pass the current_task_id to the code generator ---
+                    generated_code = await self.development_team_service._generate_code_for_task(
+                        user_id,
+                        args.get("path"),
+                        args.get("task_description"),
+                        self.original_user_goal,
+                        task['id']  # Pass the ID of the current task
+                    )
                     if generated_code.startswith("Error:"):
                         self.log("error", f"Code generation failed for write_file. Details: {generated_code}")
                         return None

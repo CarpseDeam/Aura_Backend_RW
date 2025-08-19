@@ -8,6 +8,7 @@ import os
 import aiohttp
 from typing import TYPE_CHECKING, Dict, List, Optional, Any
 from sqlalchemy.orm import Session
+from pathlib import Path
 
 from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
@@ -132,6 +133,13 @@ class DevelopmentTeamService:
         full_code_accumulator = []
         is_first_chunk = True
 
+        # --- THE FIX: Convert absolute path to relative for the frontend ---
+        try:
+            relative_path = str(Path(file_path).relative_to(self.project_manager.active_project_path))
+        except (ValueError, TypeError):
+            # Fallback if path isn't in the project (should not happen in normal flow)
+            relative_path = Path(file_path).name
+
         try:
             async with aiohttp.ClientSession() as session:
                 invoke_url = f"{self.llm_server_url}/invoke"
@@ -139,19 +147,27 @@ class DevelopmentTeamService:
                     if response.status != 200:
                         error_detail = await response.text()
                         return f"Error: LLM service failed with status {response.status}. Details: {error_detail}"
-                    async for line in response.content:
-                        if not line: continue
-                        data = json.loads(line)
-                        if "chunk" in data:
-                            chunk = data["chunk"]
-                            full_code_accumulator.append(chunk)
-                            await websocket_manager.broadcast_to_user({
-                                "type": "code_chunk", "content": {
-                                    "filePath": file_path, "chunk": chunk, "isFirstChunk": is_first_chunk
-                                }}, user_id)
-                            is_first_chunk = False
-                        elif "error" in data:
-                            return f"Error from LLM service stream: {data['error']}"
+
+                    # --- THE FIX: Correctly read the newline-delimited stream ---
+                    while not response.content.at_eof():
+                        line = await response.content.readline()
+                        if not line:
+                            continue
+                        try:
+                            data = json.loads(line)
+                            if "chunk" in data:
+                                chunk = data["chunk"]
+                                full_code_accumulator.append(chunk)
+                                await websocket_manager.broadcast_to_user({
+                                    "type": "code_chunk", "content": {
+                                        "filePath": relative_path, "chunk": chunk, "isFirstChunk": is_first_chunk
+                                    }}, user_id)
+                                is_first_chunk = False
+                            elif "error" in data:
+                                return f"Error from LLM service stream: {data['error']}"
+                        except json.JSONDecodeError:
+                            self.log("warning", f"Could not decode JSON line from stream: {line}")
+                            continue
 
             final_code = "".join(full_code_accumulator)
             code_block_regex = re.compile(r'```(?:python)?\n(.*?)\n```', re.DOTALL)

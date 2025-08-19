@@ -1,4 +1,4 @@
-# agent.py
+# src/api/agent.py
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, status, Query
 from pydantic import BaseModel
 from typing import List, Dict, Any
@@ -239,6 +239,17 @@ async def load_project_and_auto_index(
                 vcs=vcs,
                 project_path=project_path
             )
+
+    # --- THE FIX: Send the file tree to the UI after loading ---
+    try:
+        file_tree = project_manager.get_file_tree()
+        await websocket_manager.broadcast_to_user({
+            "type": "file_tree_updated",
+            "content": file_tree
+        }, str(current_user.id))
+    except Exception as e:
+        print(f"Error sending file tree for user {current_user.id}: {e}")
+        # Don't fail the whole request, just log the error.
 
     return {"message": message}
 

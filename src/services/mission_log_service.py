@@ -56,14 +56,28 @@ class MissionLogService:
             logger.error(f"Failed to save mission log to {log_path}: {e}")
 
     async def _notify_ui(self, user_id: str):
-        """Notifies the UI of an update via WebSocket."""
+        """
+        Notifies the UI of an update by reading the ground truth from disk.
+        This makes the notification stateless and robust against race conditions.
+        """
+        log_path = self._get_log_path()
+        tasks_from_disk = []
+        if log_path and log_path.exists():
+            try:
+                with open(log_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    tasks_from_disk = data.get("tasks", [])
+            except (IOError, json.JSONDecodeError) as e:
+                logger.error(f"Could not read mission log from disk for UI notification: {e}")
+                # Send empty list on error to avoid crashing the UI
+                tasks_from_disk = []
+
         message = {
             "type": "mission_log_updated",
-            "content": {"tasks": self.get_tasks()}
+            "content": {"tasks": tasks_from_disk}
         }
-        # In a web context, we assume a single client_id for simplicity, but this could be expanded
         await websocket_manager.broadcast_to_user(message, user_id)
-        logger.debug(f"UI notified for user {user_id} of mission log update.")
+        logger.debug(f"UI notified for user {user_id} with {len(tasks_from_disk)} tasks from disk.")
 
     def load_log_for_active_project(self):
         """Loads the mission log from disk for the currently active project."""
