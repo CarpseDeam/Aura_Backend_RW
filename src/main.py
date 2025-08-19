@@ -1,6 +1,5 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-# StaticFiles is REMOVED. The backend will not serve files.
 
 from src.db.database import engine
 from src.db import models
@@ -15,34 +14,23 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# --- CORS Middleware ---
-# This allows your Vercel frontend to talk to your Railway backend
-origins = [
-    "https://snowballannotation.com",
-    "https://www.snowballannotation.com",
-    "https://aura-frontend-two.vercel.app",
-    "http://localhost",
-    "http://localhost:8080",
-    "http://127.0.0.1:5500",
-]
+# --- THE FIX: A robust, regex-based CORS configuration ---
+# This pattern allows your main domain, any Vercel preview URLs, and localhost.
+# It's more flexible and less prone to errors than a static list.
+origins_regex = r"https?://(.*\.)?snowballannotation\.com|https?://localhost(:\d+)?|https?://127\.0\.0\.1(:\d+)?|https://.*\.vercel\.app"
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origin_regex=origins_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # --- API Routers ---
-# These are the only things the backend needs to know about.
 app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(keys.router, prefix="/api-keys", tags=["Settings"])
 app.include_router(assignments.router, prefix="/api/assignments", tags=["Settings"])
 app.include_router(missions.router, prefix="/api/missions", tags=["Missions"])
 app.include_router(websockets.router, tags=["WebSockets"])
 app.include_router(agent.router, prefix="/agent", tags=["Agent"])
-
-
-# THE app.mount LINE HAS BEEN COMPLETELY REMOVED.
-# This will fix the deployment crash.
