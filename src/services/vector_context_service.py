@@ -39,6 +39,7 @@ class VectorContextService:
         logger.info(f"Using local file-based vector database for project at: {rag_db_path}")
         self.client = chromadb.PersistentClient(
             path=str(rag_db_path),
+            # --- THE FIX: Explicitly disable the buggy telemetry client ---
             settings=Settings(anonymized_telemetry=False)
         )
 
