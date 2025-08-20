@@ -27,16 +27,7 @@ class ToolRunnerService:
             service_manager: "ServiceManager"
     ):
         self.event_bus = event_bus
-        # --- REFACTOR: Get dependencies from the manager ---
         self.service_manager = service_manager
-        self.foundry_manager = service_manager.foundry_manager
-        self.project_manager = service_manager.project_manager
-        self.mission_log_service = service_manager.mission_log_service
-        self.vector_context_service = service_manager.vector_context_service
-        self.development_team_service = service_manager.development_team_service
-        self.llm_client = service_manager.llm_client
-        # --- End Refactor ---
-
         self.PATH_PARAM_KEYS = ['path', 'source_path', 'destination_path', 'requirements_path']
         self.FILESYSTEM_TOOLS = [
             'write_file', 'append_to_file', 'create_directory', 'create_package_init',
@@ -49,21 +40,22 @@ class ToolRunnerService:
         """
         Dynamically creates the service map to ensure it always has the latest
         service instances, especially after a project change.
+        It now fetches directly from the authoritative ServiceManager.
         """
-        # --- REFACTOR: Use the already-injected services ---
         return {
-            'project_manager': self.project_manager,
-            'mission_log_service': self.mission_log_service,
-            'vector_context_service': self.vector_context_service,
-            'development_team_service': self.development_team_service,
-            'llm_client': self.llm_client,
+            'project_manager': self.service_manager.project_manager,
+            'mission_log_service': self.service_manager.mission_log_service,
+            'vector_context_service': self.service_manager.vector_context_service,
+            'development_team_service': self.service_manager.development_team_service,
+            'llm_client': self.service_manager.llm_client,
             'event_bus': self.event_bus,
         }
 
     async def run_tool_by_dict(self, tool_call_dict: dict, user_id: str) -> Optional[Any]:
         """Convenience method to run a tool from a dictionary."""
         tool_name = tool_call_dict.get("tool_name")
-        blueprint = self.foundry_manager.get_blueprint(tool_name)
+        foundry_manager = self.service_manager.foundry_manager
+        blueprint = foundry_manager.get_blueprint(tool_name)
         if not blueprint:
             error_msg = f"Error: Blueprint '{tool_name}' not found in Foundry."
             print(error_msg)
@@ -76,8 +68,9 @@ class ToolRunnerService:
         """Executes a single blueprint invocation."""
         blueprint = invocation.blueprint
         action_id = blueprint.id
+        foundry_manager = self.service_manager.foundry_manager
 
-        action_function = self.foundry_manager.get_action(blueprint.action_function_name)
+        action_function = foundry_manager.get_action(blueprint.action_function_name)
         if not action_function:
             error_msg = f"Error: Action function '{blueprint.action_function_name}' not found."
             print(error_msg)
@@ -105,8 +98,9 @@ class ToolRunnerService:
             else:
                 status = "SUCCESS"
 
+            project_manager = self.service_manager.project_manager
             if status == "SUCCESS" and action_id in self.FILESYSTEM_TOOLS:
-                file_tree = self.project_manager.get_file_tree()
+                file_tree = project_manager.get_file_tree()
                 await websocket_manager.broadcast_to_user({
                     "type": "file_tree_updated",
                     "content": file_tree
@@ -116,7 +110,7 @@ class ToolRunnerService:
                     file_path_str = execution_params['path']
                     try:
                         content = Path(file_path_str).read_text(encoding='utf-8')
-                        relative_path = str(Path(file_path_str).relative_to(self.project_manager.active_project_path))
+                        relative_path = str(Path(file_path_str).relative_to(project_manager.active_project_path))
                         await websocket_manager.broadcast_to_user({
                             "type": "file_content_updated",
                             "content": {
@@ -126,7 +120,6 @@ class ToolRunnerService:
                         }, user_id)
                     except Exception as e:
                         logger.error(f"Could not read file content after write to send to UI: {e}")
-
 
             print(f"✅ Result from {action_id}: {result}")
             return result
@@ -140,13 +133,9 @@ class ToolRunnerService:
             pass
 
     def _prepare_parameters(self, action_function: callable, action_params: dict) -> dict:
-        """
-        Prepares parameters for EXECUTION.
-        It resolves all file paths to ABSOLUTE paths to ensure sandbox safety.
-        It injects necessary services.
-        """
         execution_params = action_params.copy()
-        base_path: Optional[Path] = self.project_manager.active_project_path
+        project_manager = self.service_manager.project_manager
+        base_path: Optional[Path] = project_manager.active_project_path
         sig = inspect.signature(action_function)
         service_map = self._get_service_map()
 
@@ -165,23 +154,20 @@ class ToolRunnerService:
                 if service_map[param_name] is not None:
                     execution_params[param_name] = service_map[param_name]
             elif param_name == 'project_context':
-                execution_params['project_context'] = self.project_manager.active_project_context
+                execution_params['project_context'] = project_manager.active_project_context
 
         return execution_params
 
     def _create_display_params(self, execution_params: dict) -> dict:
-        """
-        Creates a copy of parameters for display purposes, making paths relative.
-        This version avoids deepcopying un-copyable service objects.
-        """
         display_params = {}
         service_keys = list(self._get_service_map().keys()) + ['project_context']
+        project_manager = self.service_manager.project_manager
 
         for key, value in execution_params.items():
             if key not in service_keys:
                 display_params[key] = value
 
-        base_path = self.project_manager.active_project_path
+        base_path = project_manager.active_project_path
         if base_path:
             for key in self.PATH_PARAM_KEYS:
                 if key in display_params and isinstance(display_params[key], str):

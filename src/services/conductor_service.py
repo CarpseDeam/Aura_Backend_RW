@@ -29,18 +29,11 @@ class ConductorService:
             service_manager: "ServiceManager"
     ):
         self.event_bus = event_bus
-        # --- REFACTOR: Get dependencies from the manager ---
         self.service_manager = service_manager
-        self.mission_log_service = service_manager.mission_log_service
-        self.tool_runner_service = service_manager.tool_runner_service
-        self.development_team_service = service_manager.development_team_service
-        self.foundry_manager = service_manager.foundry_manager
-        self.llm_client = service_manager.llm_client
-        self.db = service_manager.db
-        # --- End Refactor ---
-
         self.is_mission_active = False
         self.original_user_goal = ""
+        self.db = service_manager.db
+        self.user_id = service_manager.user_id
         logger.info("ConductorService initialized.")
 
 
@@ -49,8 +42,13 @@ class ConductorService:
         The "brain" of the Conductor. It uses the LLM to translate a task
         into a single, executable tool call.
         """
+        mission_log_service = self.service_manager.mission_log_service
+        foundry_manager = self.service_manager.foundry_manager
+        tool_runner_service = self.service_manager.tool_runner_service
+        development_team_service = self.service_manager.development_team_service
+
         current_task_description = task['description']
-        log_tasks = self.mission_log_service.get_tasks()
+        log_tasks = mission_log_service.get_tasks()
         mission_log_history = "\n".join(
             [f"- ID {t['id']} ({'Done' if t['done'] else 'Pending'}): {t['description']}" for t in log_tasks])
         if not mission_log_history:
@@ -59,8 +57,8 @@ class ConductorService:
             current_task_description += f"\n\n**PREVIOUS ATTEMPT FAILED!** Last error: `{last_error}`. You MUST try a different approach."
 
         vector_context = "Vector context (RAG) is currently disabled."
-        file_structure = "\n".join(sorted(self.tool_runner_service.project_manager.get_project_files().keys())) or "The project is currently empty."
-        available_tools = self.foundry_manager.get_llm_tool_definitions()
+        file_structure = "\n".join(sorted(tool_runner_service.project_manager.get_project_files().keys())) or "The project is currently empty."
+        available_tools = foundry_manager.get_llm_tool_definitions()
 
         prompt = CODER_PROMPT.format(
             current_task=current_task_description,
@@ -71,29 +69,26 @@ class ConductorService:
         )
         messages = [{"role": "user", "content": prompt}]
 
-        # This call now goes through the DevTeam service, but only as a passthrough to the LLM
-        response_str = await self.development_team_service._make_llm_call(int(user_id), "coder", messages, is_json=True, tools=available_tools)
+        response_str = await development_team_service._unified_llm_streamer(int(user_id), "coder", messages, is_json=True, tools=available_tools)
 
         if response_str.startswith("Error:"):
             self.log("error", f"Conductor's LLM call failed. Details: {response_str}")
             return None
 
         try:
-            tool_call = self.development_team_service._parse_json_response(response_str)
+            tool_call = development_team_service._parse_json_response(response_str)
             if "tool_name" not in tool_call or "arguments" not in tool_call:
                 raise ValueError("Response must be JSON with 'tool_name' and 'arguments'.")
 
-            # If the chosen tool is `write_file`, intercept to generate the code first.
             if tool_call.get("tool_name") == "write_file":
                 args = tool_call.get("arguments", {})
                 if not args.get("content") and args.get("task_description"):
-                    # --- THE FIX: Pass the current_task_id to the code generator ---
-                    generated_code = await self.development_team_service._generate_code_for_task(
+                    generated_code = await development_team_service._generate_code_for_task(
                         user_id,
                         args.get("path"),
                         args.get("task_description"),
                         self.original_user_goal,
-                        task['id']  # Pass the ID of the current task
+                        task['id']
                     )
                     if generated_code.startswith("Error:"):
                         self.log("error", f"Code generation failed for write_file. Details: {generated_code}")
@@ -108,7 +103,7 @@ class ConductorService:
 
     async def execute_mission_in_background(self, user_id: str):
         self.is_mission_active = True
-        self.original_user_goal = self.mission_log_service.get_initial_goal()
+        self.original_user_goal = self.service_manager.mission_log_service.get_initial_goal()
         try:
             await self.execute_mission(user_id)
         finally:
@@ -116,7 +111,8 @@ class ConductorService:
             self.log("info", f"Conductor finished mission for user {user_id}.")
 
     async def execute_mission(self, user_id: str):
-        """The main agentic loop, now with its own intelligence."""
+        mission_log_service = self.service_manager.mission_log_service
+        tool_runner_service = self.service_manager.tool_runner_service
         try:
             await self._post_chat_message(user_id, "Conductor", "Mission dispatched. Beginning autonomous execution.")
             while True:
@@ -124,7 +120,7 @@ class ConductorService:
                     self.log("info", f"Mission for user {user_id} was stopped.")
                     break
 
-                pending_tasks = self.mission_log_service.get_tasks(done=False)
+                pending_tasks = mission_log_service.get_tasks(done=False)
                 if not pending_tasks:
                     await self._handle_mission_completion(user_id)
                     break
@@ -143,11 +139,11 @@ class ConductorService:
                         retry_count += 1
                         continue
 
-                    result = await self.tool_runner_service.run_tool_by_dict(tool_call, user_id=user_id)
+                    result = await tool_runner_service.run_tool_by_dict(tool_call, user_id=user_id)
                     result_is_error, error_message = self._is_result_an_error(result)
 
                     if not result_is_error:
-                        await self.mission_log_service.mark_task_as_done(user_id, current_task['id'])
+                        await mission_log_service.mark_task_as_done(user_id, current_task['id'])
                         await self._post_chat_message(user_id, "Conductor", f"Task completed: {current_task['description']}")
                         task_succeeded = True
                         break
@@ -179,11 +175,18 @@ class ConductorService:
         return False, None
 
     async def _execute_strategic_replan(self, user_id: str, failed_task: Dict):
-        await self.development_team_service.run_strategic_replan(user_id, self.original_user_goal, failed_task, self.mission_log_service.get_tasks())
+        await self.service_manager.development_team_service.run_strategic_replan(
+            user_id,
+            self.original_user_goal,
+            failed_task,
+            self.service_manager.mission_log_service.get_tasks()
+        )
 
     async def _handle_mission_completion(self, user_id: str):
         self.log("success", f"Mission Accomplished for user {user_id}!")
-        summary = await self.development_team_service.generate_mission_summary(user_id, self.mission_log_service.get_tasks())
+        summary = await self.service_manager.development_team_service.generate_mission_summary(
+            user_id, self.service_manager.mission_log_service.get_tasks()
+        )
         await self._post_chat_message(user_id, "Aura", summary)
         await websocket_manager.broadcast_to_user({"type": "mission_success"}, user_id)
 
