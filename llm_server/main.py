@@ -58,26 +58,26 @@ async def stream_llm_response(
                 # by identifying phases based on top-level keys.
                 json_accumulator += chunk
                 if '"draft_plan":' in json_accumulator and brace_counter == 1:
-                    yield json.dumps({"phase": "drafting", "content": "Drafting initial plan..."}) + "\n"
+                    yield json.dumps({"type": "phase", "content": "Drafting initial plan..."}) + "\n"
                 if '"critique":' in json_accumulator and brace_counter == 1:
-                    yield json.dumps({"phase": "critiquing", "content": "Critiquing the draft for architectural flaws..."}) + "\n"
+                    yield json.dumps({"type": "phase", "content": "Critiquing the draft for architectural flaws..."}) + "\n"
                 if '"final_plan":' in json_accumulator and brace_counter == 1:
-                    yield json.dumps({"phase": "refining", "content": "Refining the final plan based on the critique..."}) + "\n"
+                    yield json.dumps({"type": "phase", "content": "Refining the final plan based on the critique..."}) + "\n"
 
                 brace_counter += chunk.count('{')
                 brace_counter -= chunk.count('}')
             else:
                 # For non-JSON (e.g., code generation), stream simple chunks.
-                yield json.dumps({"chunk": chunk}) + "\n"
+                yield json.dumps({"type": "chunk", "content": chunk}) + "\n"
 
         # After the stream is complete, send a final object containing the full response.
         final_payload = {"final_response": {"reply": full_response_content}}
         yield json.dumps(final_payload) + "\n"
 
     except Exception as e:
-        error_message = f"Error during streaming: {e}"
+        error_message = f"A critical error occurred in the AI microservice: {e}"
         print(error_message)
-        yield json.dumps({"error": error_message}) + "\n"
+        yield json.dumps({"type": "system_log", "content": error_message}) + "\n"
 
 
 @app.post("/invoke")
