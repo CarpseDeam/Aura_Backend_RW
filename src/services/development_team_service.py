@@ -1,4 +1,5 @@
 # src/services/development_team_service.py
+# src/services/development_team_service.py
 from __future__ import annotations
 
 import asyncio
@@ -135,9 +136,12 @@ class DevelopmentTeamService:
 
         response_str = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
 
-        if not response_str or response_str.startswith("Error:"):
-            # --- THE FIX: Replace the silent return with a user-facing error message ---
-            await self.handle_error(user_id, "Aura", response_str or "Planner returned an empty or invalid response.")
+        # --- THE FIX ---
+        # This block now handles all error conditions from the streamer, ensuring
+        # a non-empty, user-facing error message is always sent.
+        if not response_str or response_str.strip().startswith("Error:"):
+            error_content = response_str or "The Architect AI returned an empty or invalid response. This can happen if the model is overloaded or if it responded with a format that could not be understood (e.g., a tool call instead of a JSON plan)."
+            await self.handle_error(user_id, "Aura", error_content)
             return
 
         try:
