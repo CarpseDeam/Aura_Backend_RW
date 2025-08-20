@@ -17,13 +17,14 @@ router = APIRouter(
 # Helper dependency to get the mission log service and load the project
 async def get_project_mission_log(
     project_name: str,
-    aura_services: ServiceManager = Depends(get_aura_services)
+    aura_services: ServiceManager = Depends(get_aura_services),
+    current_user: User = Depends(get_current_user)
 ) -> MissionLogService:
     """
     A dependency that loads the specified project and returns the
     mission log service ready to operate on it.
     """
-    project_manager: ProjectManager = aura_services.get_project_manager()
+    project_manager: ProjectManager = aura_services.project_manager
     project_path = project_manager.load_project(project_name)
     if not project_path:
         raise HTTPException(
@@ -33,7 +34,7 @@ async def get_project_mission_log(
 
     vcs: VectorContextService = aura_services.vector_context_service
     if vcs:
-        vcs.load_for_project(Path(project_path))
+        vcs.load_for_project(Path(project_path), current_user.id)
 
     mission_log_service: MissionLogService = aura_services.mission_log_service
     # Ensure the log for the just-loaded project is active in the service

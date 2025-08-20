@@ -4,118 +4,108 @@ from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, status, 
 from typing import List, Dict, Any
 from pathlib import Path
 import traceback
+import functools
 
 from pydantic import BaseModel
 
 from src.core.websockets import websocket_manager
 
-from src.dependencies import get_aura_services, get_project_manager, rehydrate_services_for_background_task
+from src.dependencies import get_aura_services, rehydrate_services_for_background_task
 from src.core.managers import ServiceManager, ProjectManager
 from src.services import DevelopmentTeamService, ConductorService, MissionLogService, VectorContextService
 from src.db.models import User
 from src.api.auth import get_current_user
 
 
-async def run_planner_task_wrapper(
-        services: ServiceManager, user_id: int, project_name: str, user_idea: str, history: List[Dict[str, Any]]
+def background_task_handler(send_idle_status: bool = False, error_message_prefix: str = "An error occurred in a background task"):
+    """
+    A decorator to handle setup, teardown, and error reporting for background tasks.
+    It rehydrates services, closes the DB session, and logs errors.
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            services = kwargs.get('services')
+            user_id = kwargs.get('user_id')
+            if not services or not user_id:
+                print("FATAL: 'services' and 'user_id' must be provided as keyword arguments to the background task.")
+                return
+
+            db = None
+            try:
+                db = rehydrate_services_for_background_task(services, user_id)
+                await func(*args, **kwargs)
+            except Exception as e:
+                error_message = f"{error_message_prefix}: {e}"
+                print(f"FATAL ERROR in background task for user {user_id}: {e}")
+                traceback.print_exc()
+                if send_idle_status:
+                    await websocket_manager.broadcast_to_user({
+                        "type": "system_log", "content": error_message
+                    }, str(user_id))
+            finally:
+                if db:
+                    db.close()
+                if send_idle_status:
+                    await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "idle"}, str(user_id))
+        return wrapper
+    return decorator
+
+
+@background_task_handler(send_idle_status=True, error_message_prefix="A critical error occurred while generating the plan")
+async def run_planner_task(
+        services: ServiceManager, user_id: int, project_name: str, user_idea: str, history: List[Dict[str, Any]], **kwargs
 ):
-    """
-    Creates a new DB session and re-hydrates the entire service stack for the
-    background planner task. Includes comprehensive error reporting.
-    """
-    db = None
-    try:
-        db = rehydrate_services_for_background_task(services, user_id)
-        project_path_str = services.project_manager.load_project(project_name)
-        services.mission_log_service.load_log_for_active_project()
+    """Background task to run the Aura planner workflow."""
+    project_path_str = services.project_manager.load_project(project_name)
+    services.mission_log_service.load_log_for_active_project()
 
-        vcs: VectorContextService = services.vector_context_service
-        if vcs and project_path_str:
-            vcs.load_for_project(Path(project_path_str), user_id)
+    vcs: VectorContextService = services.vector_context_service
+    if vcs and project_path_str:
+        vcs.load_for_project(Path(project_path_str), user_id)
 
-        await services.development_team_service.run_aura_planner_workflow(
-            user_id=str(user_id), user_idea=user_idea, conversation_history=history
-        )
-    except Exception as e:
-        error_message = f"A critical error occurred while generating the plan: {e}"
-        print(f"FATAL ERROR in planner background task for user {user_id}: {e}")
-        traceback.print_exc()
-        await websocket_manager.broadcast_to_user({
-            "type": "system_log", "content": error_message
-        }, str(user_id))
-    finally:
-        if db:
-            db.close()
-        await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "idle"}, str(user_id))
+    await services.development_team_service.run_aura_planner_workflow(
+        user_id=str(user_id), user_idea=user_idea, conversation_history=history
+    )
 
 
-async def run_dispatch_task_wrapper(services: ServiceManager, user_id: int, project_name: str):
-    """
-    Creates a new DB session and re-hydrates the entire service stack for the
-    background dispatcher task. Includes comprehensive error reporting.
-    """
-    db = None
-    try:
-        db = rehydrate_services_for_background_task(services, user_id)
-        project_path_str = services.project_manager.load_project(project_name)
-        services.mission_log_service.load_log_for_active_project()
+@background_task_handler(send_idle_status=True, error_message_prefix="A critical error occurred during mission execution")
+async def run_dispatch_task(services: ServiceManager, user_id: int, project_name: str, **kwargs):
+    """Background task to run the mission dispatcher."""
+    project_path_str = services.project_manager.load_project(project_name)
+    services.mission_log_service.load_log_for_active_project()
 
-        vcs: VectorContextService = services.vector_context_service
-        if vcs and project_path_str:
-            vcs.load_for_project(Path(project_path_str), user_id)
+    vcs: VectorContextService = services.vector_context_service
+    if vcs and project_path_str:
+        vcs.load_for_project(Path(project_path_str), user_id)
 
-        await services.conductor_service.execute_mission_in_background(user_id=str(user_id))
-    except Exception as e:
-        error_message = f"A critical error occurred during mission execution: {e}"
-        print(f"FATAL ERROR in dispatcher background task for user {user_id}: {e}")
-        traceback.print_exc()
-        await websocket_manager.broadcast_to_user({
-            "type": "system_log", "content": error_message
-        }, str(user_id))
-    finally:
-        if db:
-            db.close()
-        await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "idle"}, str(user_id))
+    await services.conductor_service.execute_mission_in_background(user_id=str(user_id))
 
 
-async def run_reindex_task_wrapper(
-        services: ServiceManager, user_id: int, project_name: str, file_path_str: str, content: str
+@background_task_handler(error_message_prefix="Background re-indexing failed")
+async def run_reindex_task(
+        services: ServiceManager, user_id: int, project_name: str, file_path_str: str, content: str, **kwargs
 ):
     """Wrapper to run the re-indexing task in the background."""
-    db = None
-    try:
-        db = rehydrate_services_for_background_task(services, user_id)
-        project_path_str = services.project_manager.load_project(project_name)
-        vcs: VectorContextService = services.vector_context_service
-        if vcs and project_path_str:
-            vcs.load_for_project(Path(project_path_str), user_id)
-            await vcs.reindex_file(Path(file_path_str), content)
-    except Exception as e:
-        print(f"BACKGROUND RE-INDEXING FAILED for {file_path_str}: {e}")
-    finally:
-        if db:
-            db.close()
+    project_path_str = services.project_manager.load_project(project_name)
+    vcs: VectorContextService = services.vector_context_service
+    if vcs and project_path_str:
+        vcs.load_for_project(Path(project_path_str), user_id)
+        await vcs.reindex_file(Path(file_path_str), content)
 
 
-async def run_initial_project_index_wrapper(
-        services: ServiceManager, user_id: int, project_name: str
+@background_task_handler(error_message_prefix="Background initial index failed")
+async def run_initial_project_index(
+        services: ServiceManager, user_id: int, project_name: str, **kwargs
 ):
     """Wrapper to run the initial, full-project indexing task in the background."""
-    db = None
     print(f"BACKGROUND: Starting initial project index for {project_name}")
-    try:
-        db = rehydrate_services_for_background_task(services, user_id)
-        project_path_str = services.project_manager.load_project(project_name)
-        vcs: VectorContextService = services.vector_context_service
-        if vcs and project_path_str:
-            vcs.load_for_project(Path(project_path_str), user_id)
-            await vcs.reindex_entire_project()
-            print(f"BACKGROUND: Successfully completed initial project index for {project_name}")
-    except Exception as e:
-        print(f"BACKGROUND INITIAL INDEX FAILED for {project_name}: {e}")
-    finally:
-        if db:
-            db.close()
+    project_path_str = services.project_manager.load_project(project_name)
+    vcs: VectorContextService = services.vector_context_service
+    if vcs and project_path_str:
+        vcs.load_for_project(Path(project_path_str), user_id)
+        await vcs.reindex_entire_project()
+        print(f"BACKGROUND: Successfully completed initial project index for {project_name}")
 
 
 router = APIRouter(
@@ -180,7 +170,7 @@ async def generate_agent_plan(
 ):
     # No need to load project here; the background task will handle it.
     background_tasks.add_task(
-        run_planner_task_wrapper,
+        run_planner_task,
         services=aura_services,
         user_id=current_user.id,
         project_name=request.project_name,
@@ -199,7 +189,7 @@ async def dispatch_agent_mission(
 ):
     # No need to load project here; the background task will handle it.
     background_tasks.add_task(
-        run_dispatch_task_wrapper,
+        run_dispatch_task,
         services=aura_services,
         user_id=current_user.id,
         project_name=request.project_name,
@@ -209,10 +199,10 @@ async def dispatch_agent_mission(
 
 @router.get("/", response_model=List[str])
 async def list_user_projects(
-        project_manager: ProjectManager = Depends(get_project_manager)
+        aura_services: ServiceManager = Depends(get_aura_services)
 ):
     try:
-        return project_manager.list_projects()
+        return aura_services.project_manager.list_projects()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list projects: {e}")
 
@@ -220,10 +210,10 @@ async def list_user_projects(
 @router.post("/{project_name}", status_code=status.HTTP_201_CREATED)
 async def create_new_project(
         project_name: str,
-        project_manager: ProjectManager = Depends(get_project_manager)
+        aura_services: ServiceManager = Depends(get_aura_services)
 ):
     try:
-        project_path = project_manager.new_project(project_name)
+        project_path = aura_services.project_manager.new_project(project_name)
         return {"message": "Project created successfully.", "project_path": project_path}
     except FileExistsError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -254,7 +244,7 @@ async def load_project_and_auto_index(
         if vcs.collection and vcs.collection.count() == 0:
             message += " Initial project scan for AI context has been started in the background."
             background_tasks.add_task(
-                run_initial_project_index_wrapper,
+                run_initial_project_index,
                 services=aura_services,
                 user_id=current_user.id,
                 project_name=project_name
@@ -274,10 +264,10 @@ async def load_project_and_auto_index(
 @router.delete("/{project_name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_existing_project(
         project_name: str,
-        project_manager: ProjectManager = Depends(get_project_manager)
+        aura_services: ServiceManager = Depends(get_aura_services)
 ):
     try:
-        project_manager.delete_project(project_name)
+        aura_services.project_manager.delete_project(project_name)
         return None
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -290,8 +280,9 @@ async def delete_existing_project(
 @router.get("/workspace/{project_name}/files", response_model=List[Dict[str, Any]])
 async def get_project_file_tree(
         project_name: str,
-        project_manager: ProjectManager = Depends(get_project_manager)
+        aura_services: ServiceManager = Depends(get_aura_services)
 ):
+    project_manager: ProjectManager = aura_services.project_manager
     project_path = project_manager.load_project(project_name)
     if not project_path:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found.")
@@ -302,8 +293,9 @@ async def get_project_file_tree(
 async def get_project_file_content(
         project_name: str,
         path: str = Query(...),
-        project_manager: ProjectManager = Depends(get_project_manager)
+        aura_services: ServiceManager = Depends(get_aura_services)
 ):
+    project_manager: ProjectManager = aura_services.project_manager
     project_path = project_manager.load_project(project_name)
     if not project_path:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found.")
@@ -333,7 +325,7 @@ async def write_project_file_content(
         raise HTTPException(status_code=400, detail="Invalid file path or failed to write file.")
 
     background_tasks.add_task(
-        run_reindex_task_wrapper,
+        run_reindex_task,
         services=aura_services,
         user_id=current_user.id,
         project_name=project_name,

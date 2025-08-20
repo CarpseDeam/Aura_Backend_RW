@@ -22,30 +22,32 @@ def get_foundry_manager() -> FoundryManager:
     """Dependency to provide the shared FoundryManager instance."""
     return foundry_manager
 
+def get_event_bus() -> EventBus:
+    """Dependency to provide a shared EventBus instance per request."""
+    return EventBus()
+
 def get_project_manager(
+    event_bus: EventBus = Depends(get_event_bus),
     current_user: User = Depends(get_current_user)
 ) -> ProjectManager:
+    """Dependency to provide a shared ProjectManager instance per request."""
     user_id = str(current_user.id)
     persistent_storage_path = Path("/data")
     user_workspace_path = persistent_storage_path / "workspaces" / user_id
     os.makedirs(user_workspace_path, exist_ok=True)
-    return ProjectManager(EventBus(), workspace_path=str(user_workspace_path))
+    return ProjectManager(event_bus, workspace_path=str(user_workspace_path))
 
 
 def get_aura_services(
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db),
-        fm: FoundryManager = Depends(get_foundry_manager)
+        fm: FoundryManager = Depends(get_foundry_manager),
+        project_manager: ProjectManager = Depends(get_project_manager)
 ) -> ServiceManager:
     user_id = str(current_user.id)
     print(f"✅ Spinning up dedicated Aura services for user: {current_user.email} ({user_id})")
 
-    persistent_storage_path = Path("/data")
-    user_workspace_path = persistent_storage_path / "workspaces" / user_id
-    os.makedirs(user_workspace_path, exist_ok=True)
-
-    event_bus = EventBus()
-    project_manager = ProjectManager(event_bus, workspace_path=str(user_workspace_path))
+    event_bus = project_manager.event_bus
     llm_client = LLMClient()
 
     assignments_from_db = crud.get_assignments_for_user(db, user_id=current_user.id)
