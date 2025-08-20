@@ -44,8 +44,8 @@ class ConductorService:
         """
         mission_log_service = self.service_manager.mission_log_service
         foundry_manager = self.service_manager.foundry_manager
-        tool_runner_service = self.service_manager.tool_runner_service
         development_team_service = self.service_manager.development_team_service
+        project_manager = self.service_manager.project_manager
 
         current_task_description = task['description']
         log_tasks = mission_log_service.get_tasks()
@@ -57,7 +57,7 @@ class ConductorService:
             current_task_description += f"\n\n**PREVIOUS ATTEMPT FAILED!** Last error: `{last_error}`. You MUST try a different approach."
 
         vector_context = "Vector context (RAG) is currently disabled."
-        file_structure = "\n".join(sorted(tool_runner_service.project_manager.get_project_files().keys())) or "The project is currently empty."
+        file_structure = "\n".join(sorted(project_manager.get_project_files().keys())) or "The project is currently empty."
         available_tools = foundry_manager.get_llm_tool_definitions()
 
         prompt = CODER_PROMPT.format(
@@ -115,6 +115,7 @@ class ConductorService:
         tool_runner_service = self.service_manager.tool_runner_service
         try:
             await self._post_chat_message(user_id, "Conductor", "Mission dispatched. Beginning autonomous execution.")
+            await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "thinking"}, user_id)
             while True:
                 if not self.is_mission_active:
                     self.log("info", f"Mission for user {user_id} was stopped.")
