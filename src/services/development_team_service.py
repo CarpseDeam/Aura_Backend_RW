@@ -115,7 +115,7 @@ class DevelopmentTeamService:
         try:
             return json.loads(response)
         except json.JSONDecodeError:
-            match = re.search(r''''json\s*(\{.*?\})\s*'''', response, re.DOTALL)
+            match = re.search(r'''json\s*(\{.*?\})\s*''', response, re.DOTALL)
             if match:
                 return json.loads(match.group(1))
             match = re.search(r'\{.*\}', response, re.DOTALL)
@@ -219,7 +219,7 @@ class DevelopmentTeamService:
 
         full_code = await self._unified_llm_streamer(int(user_id), "coder", messages, stream_to_user_socket_as='code_stream_chunk', file_path=path)
 
-        code_block_regex = re.compile(r'''(?:python)?\n(.*?)\n'''', re.DOTALL)
+        code_block_regex = re.compile(r'''(?:python)?\n(.*?)\n''', re.DOTALL)
         match = code_block_regex.search(full_code)
         return match.group(1).strip() if match else full_code.strip()
 
