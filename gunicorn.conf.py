@@ -19,3 +19,8 @@ bind = f"[::]:{port}"
 loglevel = 'info'
 accesslog = '-'  # to stdout
 errorlog = '-'   # to stderr
+
+# --- THE FIX for ModuleNotFoundError ---
+# Add the current directory to the Python path. This ensures that Gunicorn
+# can find the 'src' module when the application starts.
+pythonpath = '.'
