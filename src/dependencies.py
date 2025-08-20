@@ -1,4 +1,5 @@
 # src/dependencies.py
+import logging
 from pathlib import Path
 from fastapi import Depends
 from sqlalchemy.orm import Session
@@ -15,6 +16,9 @@ from src.services import (
 )
 from src.foundry import FoundryManager
 from src.core.llm_client import LLMClient
+
+# Initialize logger
+logger = logging.getLogger(__name__)
 
 foundry_manager = FoundryManager()
 
@@ -45,7 +49,7 @@ def get_aura_services(
         project_manager: ProjectManager = Depends(get_project_manager)
 ) -> ServiceManager:
     user_id = str(current_user.id)
-    print(f"✅ Spinning up dedicated Aura services for user: {current_user.email} ({user_id})")
+    logger.info(f"✅ Spinning up dedicated Aura services for user: {current_user.email} ({user_id})")
 
     event_bus = project_manager.event_bus
     llm_client = LLMClient()
@@ -54,7 +58,7 @@ def get_aura_services(
     if assignments_from_db:
         llm_client.set_assignments({a.role_name: a.model_id for a in assignments_from_db})
         llm_client.set_temperatures({a.role_name: a.temperature for a in assignments_from_db})
-        print(f"✅ LLM client pre-populated for user {current_user.id} with {len(assignments_from_db)} assignments.")
+        logger.info(f"✅ LLM client pre-populated for user {current_user.id} with {len(assignments_from_db)} assignments.")
 
     services = ServiceManager(event_bus, project_root=Path("."))
     services.project_manager = project_manager
@@ -69,7 +73,7 @@ def get_aura_services(
     services.development_team_service = DevelopmentTeamService(event_bus, services)
     services.conductor_service = ConductorService(event_bus, services)
 
-    print(f"✅ Aura services are online and ready for user {user_id}.")
+    logger.info(f"✅ Aura services are online and ready for user {user_id}.")
     return services
 
 def rehydrate_services_for_background_task(services: ServiceManager, user_id: int) -> Session:
@@ -86,5 +90,5 @@ def rehydrate_services_for_background_task(services: ServiceManager, user_id: in
     if services.development_team_service:
         services.development_team_service.refresh_llm_assignments()
 
-    print(f"🔄 Services re-hydrated for background task for user {user_id}.")
+    logger.info(f"🔄 Services re-hydrated for background task for user {user_id}.")
     return db

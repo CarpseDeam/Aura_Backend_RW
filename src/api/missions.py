@@ -34,7 +34,7 @@ async def get_project_mission_log(
 
     vcs: VectorContextService = aura_services.vector_context_service
     if vcs:
-        vcs.load_for_project(Path(project_path), current_user.id)
+        vcs.load_for_project(Path(project_path), str(current_user.id))
 
     mission_log_service: MissionLogService = aura_services.mission_log_service
     # Ensure the log for the just-loaded project is active in the service

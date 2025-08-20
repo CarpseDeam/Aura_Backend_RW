@@ -1,4 +1,5 @@
 # core/managers/venv_manager.py
+import logging
 import os
 import sys
 import subprocess
@@ -6,6 +7,8 @@ import shutil
 from pathlib import Path
 import traceback
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 class VenvManager:
@@ -54,10 +57,10 @@ class VenvManager:
     def create_venv(self) -> bool:
         """Creates a new virtual environment for the project."""
         venv_path = self.project_path / ".venv"
-        print(f"[VenvManager] Attempting to create virtual environment at: {venv_path}")
+        logger.info(f"Attempting to create virtual environment at: {venv_path}")
         try:
             base_python = self._get_base_python_executable()
-            print(f"[VenvManager] Creating virtual environment using: {base_python}")
+            logger.info(f"Creating virtual environment using: {base_python}")
 
             startupinfo = None
             if sys.platform == "win32":
@@ -74,18 +77,18 @@ class VenvManager:
             if result.stderr and "Error" in result.stderr:
                 raise RuntimeError(f"Venv creation failed with error: {result.stderr}")
 
-            print(f"[VenvManager] Virtual environment created successfully.")
+            logger.info("Virtual environment created successfully.")
             return True
         except (subprocess.CalledProcessError, RuntimeError) as e:
-            print(f"[VenvManager] ERROR: Virtual environment creation failed.\n{traceback.format_exc()}")
+            logger.error(f"ERROR: Virtual environment creation failed.\n{traceback.format_exc()}")
             return False
         except Exception as e:
-            print(f"[VenvManager] ERROR: Unexpected error during venv creation: {e}\n{traceback.format_exc()}")
+            logger.error(f"ERROR: Unexpected error during venv creation: {e}\n{traceback.format_exc()}")
             return False
 
     def _get_base_python_executable(self) -> str:
         """Finds a suitable Python executable for creating virtual environments."""
-        print("[VenvManager] Attempting to find a base Python executable...")
+        logger.info("Attempting to find a base Python executable...")
         # Prioritize system Python over bundled executable
         if sys.prefix != sys.base_prefix:
             base_python = Path(sys.base_prefix) / ("python.exe" if sys.platform == "win32" else "bin/python")

@@ -1,9 +1,13 @@
 # core/managers/git_manager.py
+import logging
 import os
 import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import List, Optional, Tuple, Dict
+
+# Initialize logger
+logger = logging.getLogger(__name__)
 
 try:
     import git
@@ -23,7 +27,7 @@ class GitManager:
         self.repo: Optional[git.Repo] = None
 
         if not GIT_AVAILABLE:
-            print("[GitManager] WARNING: GitPython not installed. Git features will be disabled.")
+            logger.warning("GitPython not installed. Git features will be disabled.")
             return
 
         git_executable_path = os.getenv("GIT_EXECUTABLE_PATH")
@@ -35,16 +39,16 @@ class GitManager:
     def _load_or_init_repo(self):
         """Loads an existing repository or initializes a new one."""
         if not self.project_path.is_dir():
-            print(f"[GitManager] Error: Project path does not exist: {self.project_path}")
+            logger.error(f"Project path does not exist: {self.project_path}")
             return
         try:
             self.repo = git.Repo(self.project_path)
-            print(f"[GitManager] Loaded existing Git repository at {self.project_path}")
+            logger.info(f"Loaded existing Git repository at {self.project_path}")
         except InvalidGitRepositoryError:
-            print(f"[GitManager] No repo found at {self.project_path}. Initializing new one.")
+            logger.info(f"No repo found at {self.project_path}. Initializing new one.")
             self.repo = git.Repo.init(self.project_path)
         except GitCommandError as e:
-            print(f"[GitManager] Git error on repo load/init: {e}")
+            logger.error(f"Git error on repo load/init: {e}")
             self.repo = None
 
     def get_active_branch_name(self) -> str:
@@ -63,7 +67,7 @@ class GitManager:
         if (self.project_path / ".gitignore").exists():
             self.repo.index.add([".gitignore"])
         self.repo.index.commit("Initial commit by Aura")
-        print("[GitManager] Git repository initialized for new project.")
+        logger.info("Git repository initialized for new project.")
 
     def ensure_initial_commit(self):
         """Ensures that an existing repository has at least one commit."""
@@ -71,12 +75,12 @@ class GitManager:
         try:
             _ = self.repo.head.commit
         except (ValueError, GitCommandError):
-            print("[GitManager] Loaded repo has no commits. Creating baseline commit.")
+            logger.info("Loaded repo has no commits. Creating baseline commit.")
             self._create_gitignore_if_needed()
             self.repo.git.add(A=True)
             if self.repo.index.entries:
                 self.repo.index.commit("Baseline commit for existing files by Aura")
-                print("[GitManager] Created baseline commit for existing files.")
+                logger.info("Created baseline commit for existing files.")
 
     def begin_modification_session(self) -> str:
         """
@@ -85,7 +89,7 @@ class GitManager:
         if not self.repo:
             return "Error: No Git repository."
         current_branch_name = self.get_active_branch_name()
-        print(f"[GitManager] Beginning modification session on existing branch: {current_branch_name}")
+        logger.info(f"Beginning modification session on existing branch: {current_branch_name}")
         return current_branch_name
 
     def write_and_stage_files(self, files: dict[str, str]):
@@ -98,7 +102,7 @@ class GitManager:
                 full_path.write_text(content, encoding='utf-8')
                 paths_to_stage.append(str(full_path))
             except Exception as e:
-                print(f"[GitManager] Error writing file {relative_path_str}: {e}")
+                logger.error(f"Error writing file {relative_path_str}: {e}")
 
         if self.repo and paths_to_stage:
             self.stage_files(paths_to_stage)
@@ -108,9 +112,9 @@ class GitManager:
         if not self.repo: return
         try:
             self.repo.index.add(file_paths)
-            print(f"[GitManager] Staged {len(file_paths)} files.")
+            logger.info(f"Staged {len(file_paths)} files.")
         except GitCommandError as e:
-            print(f"[GitManager] Error staging files: {e}")
+            logger.error(f"Error staging files: {e}")
 
     def stage_file(self, relative_path_str: str) -> tuple[bool, str]:
         """Stages a single file in Git."""

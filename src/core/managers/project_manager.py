@@ -1,4 +1,5 @@
 # src/core/managers/project_manager.py
+import logging
 import shutil
 from pathlib import Path
 from datetime import datetime
@@ -9,6 +10,9 @@ from .venv_manager import VenvManager
 from .project_context import ProjectContext
 from src.event_bus import EventBus
 from src.events import ProjectCreated
+
+# Initialize logger
+logger = logging.getLogger(__name__)
 
 
 class ProjectManager:
@@ -28,7 +32,7 @@ class ProjectManager:
 
     def clear_active_project(self):
         """Resets the active project context."""
-        print("[ProjectManager] Clearing active project.")
+        logger.info("Clearing active project.")
         self.active_project_path = None
         self.git_manager = None
         self.venv_manager = None
@@ -82,7 +86,7 @@ class ProjectManager:
         if project_path.exists():
             raise FileExistsError(f"Project '{project_name}' already exists.")
 
-        print(f"[ProjectManager] Creating new project at: {project_path}")
+        logger.info(f"Creating new project at: {project_path}")
         project_path.mkdir(parents=True, exist_ok=True)
 
         self.active_project_path = project_path
@@ -93,10 +97,10 @@ class ProjectManager:
         if self.git_manager.repo:
             self.git_manager.init_repo_for_new_project()
         else:
-            print("[ProjectManager] GitManager failed to initialize a repository.")
+            logger.warning("GitManager failed to initialize a repository.")
 
         if not self.venv_manager.create_venv():
-            print("[ProjectManager] CRITICAL: VenvManager failed to create a virtual environment.")
+            logger.critical("VenvManager failed to create a virtual environment.")
             shutil.rmtree(project_path, ignore_errors=True)
             self.clear_active_project()
             return None
@@ -105,7 +109,7 @@ class ProjectManager:
             "project_created",
             ProjectCreated(project_name=project_name, project_path=str(self.active_project_path))
         )
-        print(f"[ProjectManager] Successfully created new project: {project_path}")
+        logger.info(f"Successfully created new project: {project_path}")
         return str(project_path)
 
     def delete_project(self, project_name: str) -> bool:
@@ -121,7 +125,7 @@ class ProjectManager:
              raise ValueError("Cannot delete a project outside of the user's workspace.")
 
         shutil.rmtree(project_path)
-        print(f"[ProjectManager] Successfully deleted project: {project_path}")
+        logger.info(f"Successfully deleted project: {project_path}")
 
         # If the deleted project was the active one, clear it.
         if self.active_project_path and self.active_project_path == project_path:
@@ -134,10 +138,10 @@ class ProjectManager:
         # For the web API, 'path' will just be the project name.
         project_path = (self.workspace_root / path).resolve()
         if not project_path.is_dir():
-            print(f"[ProjectManager] Load failed: {path} is not a directory in the workspace.")
+            logger.warning(f"Load failed: {path} is not a directory in the workspace.")
             return None
 
-        print(f"[ProjectManager] Loading project from: {project_path}")
+        logger.info(f"Loading project from: {project_path}")
         self.active_project_path = project_path
         self.is_existing_project = True
         self.git_manager = GitManager(project_path)
@@ -146,16 +150,16 @@ class ProjectManager:
         if self.git_manager.repo:
             self.git_manager.ensure_initial_commit()
         else:
-            print("[ProjectManager] Project loaded, but Git features will be unavailable.")
+            logger.warning("Project loaded, but Git features will be unavailable.")
 
         if not self.venv_manager.is_active:
-            print("[ProjectManager] Warning: No virtual environment found. Please run install command.")
+            logger.warning("Warning: No virtual environment found. Please run install command.")
 
         self.event_bus.emit(
             "project_created",
             ProjectCreated(project_name=self.active_project_name, project_path=str(self.active_project_path))
         )
-        print(f"[ProjectManager] Project loaded: {self.active_project_path}")
+        logger.info(f"Project loaded: {self.active_project_path}")
         return str(self.active_project_path)
 
     def get_project_files(self) -> dict[str, str]:
@@ -198,16 +202,16 @@ class ProjectManager:
 
         full_path = (self.active_project_path / relative_path).resolve()
         if self.active_project_path not in full_path.parents and self.active_project_path != full_path.parent:
-            print(f"SECURITY WARNING: Attempt to write outside project sandbox denied for path: {full_path}")
+            logger.warning(f"SECURITY WARNING: Attempt to write outside project sandbox denied for path: {full_path}")
             return None
 
         try:
             full_path.parent.mkdir(parents=True, exist_ok=True)
             full_path.write_text(content, encoding='utf-8')
-            print(f"Successfully wrote to file: {full_path}")
+            logger.info(f"Successfully wrote to file: {full_path}")
             return str(full_path)
         except Exception as e:
-            print(f"Error writing to file {full_path}: {e}")
+            logger.error(f"Error writing to file {full_path}: {e}")
             return None
 
     def get_file_tree(self) -> List[Dict]:

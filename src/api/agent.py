@@ -1,4 +1,5 @@
 # src/api/agent.py
+import logging
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, status, Query
 
 from typing import List, Dict, Any
@@ -16,6 +17,9 @@ from src.services import DevelopmentTeamService, ConductorService, MissionLogSer
 from src.db.models import User
 from src.api.auth import get_current_user
 
+# Initialize logger
+logger = logging.getLogger(__name__)
+
 
 def background_task_handler(send_idle_status: bool = False, error_message_prefix: str = "An error occurred in a background task"):
     """
@@ -28,7 +32,7 @@ def background_task_handler(send_idle_status: bool = False, error_message_prefix
             services = kwargs.get('services')
             user_id = kwargs.get('user_id')
             if not services or not user_id:
-                print("FATAL: 'services' and 'user_id' must be provided as keyword arguments to the background task.")
+                logger.fatal("FATAL: 'services' and 'user_id' must be provided as keyword arguments to the background task.")
                 return
 
             db = None
@@ -37,8 +41,7 @@ def background_task_handler(send_idle_status: bool = False, error_message_prefix
                 await func(*args, **kwargs)
             except Exception as e:
                 error_message = f"{error_message_prefix}: {e}"
-                print(f"FATAL ERROR in background task for user {user_id}: {e}")
-                traceback.print_exc()
+                logger.fatal(f"FATAL ERROR in background task for user {user_id}: {e}", exc_info=True)
                 if send_idle_status:
                     await websocket_manager.broadcast_to_user({
                         "type": "system_log", "content": error_message
@@ -99,13 +102,13 @@ async def run_initial_project_index(
         services: ServiceManager, user_id: int, project_name: str, **kwargs
 ):
     """Wrapper to run the initial, full-project indexing task in the background."""
-    print(f"BACKGROUND: Starting initial project index for {project_name}")
+    logger.info(f"BACKGROUND: Starting initial project index for {project_name}")
     project_path_str = services.project_manager.load_project(project_name)
     vcs: VectorContextService = services.vector_context_service
     if vcs and project_path_str:
         vcs.load_for_project(Path(project_path_str), user_id)
         await vcs.reindex_entire_project()
-        print(f"BACKGROUND: Successfully completed initial project index for {project_name}")
+        logger.info(f"BACKGROUND: Successfully completed initial project index for {project_name}")
 
 
 router = APIRouter(
@@ -256,7 +259,7 @@ async def load_project_and_auto_index(
             "content": file_tree
         }, str(current_user.id))
     except Exception as e:
-        print(f"Error sending file tree for user {current_user.id}: {e}")
+        logger.error(f"Error sending file tree for user {current_user.id}: {e}")
 
     return {"message": message}
 
