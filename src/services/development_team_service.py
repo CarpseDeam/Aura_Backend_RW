@@ -84,6 +84,7 @@ class DevelopmentTeamService:
                 async with session.post(invoke_url, json=payload, headers=headers, timeout=300) as response:
                     if response.status != 200:
                         error_detail = await response.text()
+                        await self._post_chat_message(str(user_id), "Aura", f"Error from AI microservice: {error_detail}", is_error=True)
                         return f"Error: LLM service failed with status {response.status}. Details: {error_detail}"
 
                     while not response.content.at_eof():
@@ -92,10 +93,7 @@ class DevelopmentTeamService:
                             continue
                         try:
                             data = json.loads(line)
-                            # 1. Immediately forward the structured message to the client.
                             await websocket_manager.broadcast_to_user(data, str(user_id))
-
-                            # 2. If this is the final message, capture its content for the return value.
                             if "final_response" in data and "reply" in data["final_response"]:
                                 final_reply = data["final_response"]["reply"]
                         except json.JSONDecodeError:
@@ -103,8 +101,10 @@ class DevelopmentTeamService:
                             continue
             return final_reply
         except Exception as e:
+            error_msg = f"An unexpected error occurred during streaming: {e}"
             self.log("error", f"Error during unified streaming call for user {user_id}: {e}")
-            return f"An unexpected error occurred during streaming: {e}"
+            await self._post_chat_message(str(user_id), "Aura", error_msg, is_error=True)
+            return error_msg
 
 
     def _parse_json_response(self, response: str) -> dict:
@@ -126,7 +126,6 @@ class DevelopmentTeamService:
         messages = [{"role": "user", "content": prompt}]
         self.refresh_llm_assignments()
 
-        # The unified streamer handles both streaming to client and returning the final reply.
         response_str = await self._unified_llm_streamer(int(user_id), "chat", messages)
 
         if response_str.startswith("Error:"):
@@ -140,11 +139,11 @@ class DevelopmentTeamService:
         messages = [{"role": "user", "content": prompt}]
         self.refresh_llm_assignments()
 
-        # The unified streamer handles both streaming phases to client and returning the final JSON.
         response_str = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
 
         if not response_str or response_str.startswith("Error:"):
-            await self.handle_error(user_id, "Aura", response_str or "Planner returned an empty response.")
+            # The streamer now sends errors via WebSocket, so we just need to log and exit.
+            self.log("error", f"Planner returned an empty or error response for user {user_id}.")
             return
 
         try:

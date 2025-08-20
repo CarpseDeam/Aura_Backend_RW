@@ -1,6 +1,5 @@
 # src/prompts/creative.py
 import textwrap
-from .master_rules import SENIOR_ARCHITECT_HEURISTIC_RULE
 
 # This prompt defines the "Aura" persona for one-shot, detailed planning.
 AURA_PLANNER_PROMPT = textwrap.dedent("""
@@ -45,7 +44,7 @@ AURA_PLANNER_PROMPT = textwrap.dedent("""
 
     ---
     **User's High-Level Goal:**
-    `{{user_idea}}`
+    `{user_idea}`
     ---
 
     Generate the complete JSON object now, strictly following all rules.
