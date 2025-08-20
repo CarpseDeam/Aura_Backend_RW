@@ -37,9 +37,6 @@ class DevelopmentTeamService:
         self.event_bus = event_bus
         self.service_manager = service_manager
         self.llm_server_url = os.getenv("LLM_SERVER_URL")
-        # --- THE FIX: We no longer store copies of db or user_id ---
-        # self.db = service_manager.db
-        # self.user_id = service_manager.user_id
 
     def refresh_llm_assignments(self):
         """
@@ -66,7 +63,7 @@ class DevelopmentTeamService:
         provider_name, model_name = llm_client.get_model_for_role(role)
         api_key = crud.get_decrypted_key_for_provider(db, user_id, provider_name=provider_name)
         if not all([provider_name, model_name, api_key]):
-            return f"Error: Missing config for role '{role}' or provider '{provider_name}'."
+            return f"Error: Missing config for role '{role}' or provider '{provider_name}'. Please set it in Settings."
 
         payload = {
             "provider_name": provider_name, "model_name": model_name, "messages": messages,
@@ -139,7 +136,8 @@ class DevelopmentTeamService:
         response_str = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
 
         if not response_str or response_str.startswith("Error:"):
-            self.log("error", f"Planner returned an empty or error response for user {user_id}.")
+            # --- THE FIX: Replace the silent return with a user-facing error message ---
+            await self.handle_error(user_id, "Aura", response_str or "Planner returned an empty or invalid response.")
             return
 
         try:
