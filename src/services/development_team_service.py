@@ -34,7 +34,6 @@ class DevelopmentTeamService:
             service_manager: "ServiceManager"
     ):
         self.event_bus = event_bus
-        # --- THE FIX: Pull dependencies from the single ServiceManager ---
         self.service_manager = service_manager
         self.llm_client = service_manager.llm_client
         self.project_manager = service_manager.project_manager
@@ -43,11 +42,8 @@ class DevelopmentTeamService:
         self.foundry_manager = service_manager.foundry_manager
         self.db = service_manager.db
         self.user_id = service_manager.user_id
-        # --- End Refactor ---
 
         self.llm_server_url = os.getenv("LLM_SERVER_URL")
-
-        # --- THE FIX: REMOVED assignment loading from __init__ to prevent stale data ---
 
     def refresh_llm_assignments(self):
         """
@@ -60,83 +56,27 @@ class DevelopmentTeamService:
             self.llm_client.set_temperatures({a.role_name: a.temperature for a in assignments_from_db})
             print(f"LLM client assignments refreshed for user {self.user_id}.")
 
-    async def _make_llm_call(self, user_id: int, role: str, messages: List[Dict[str, Any]],
-                             is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> str:
+    async def _unified_llm_streamer(self, user_id: int, role: str, messages: List[Dict[str, Any]],
+                                    is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None) -> str:
         """
-        Makes a secure, asynchronous HTTP call to the dedicated LLM microservice.
-        This method acts as a generic LLM gateway for other services.
+        A single, robust method to handle all streaming LLM calls.
+        It streams all raw JSON messages to the client via WebSocket for real-time feedback,
+        and reliably returns the complete, final "reply" content for backend processing.
         """
         if not self.llm_server_url:
             return "Error: LLM_SERVER_URL is not configured."
 
         provider_name, model_name = self.llm_client.get_model_for_role(role)
-        if not provider_name or not model_name:
-            return f"Error: No model assigned for role '{role}'."
-
         api_key = crud.get_decrypted_key_for_provider(self.db, user_id, provider_name=provider_name)
-        if not api_key:
-            return f"Error: No API key configured for provider '{provider_name}'."
+        if not all([provider_name, model_name, api_key]):
+            return f"Error: Missing config for role '{role}' or provider '{provider_name}'."
 
         payload = {
             "provider_name": provider_name, "model_name": model_name, "messages": messages,
             "temperature": self.llm_client.get_role_temperature(role), "is_json": is_json, "tools": tools,
         }
         headers = {"Content-Type": "application/json", "X-Provider-API-Key": api_key}
-
-        try:
-            async with aiohttp.ClientSession() as session:
-                invoke_url = f"{self.llm_server_url}/invoke"
-                async with session.post(invoke_url, json=payload, headers=headers, timeout=300) as response:
-                    if response.status == 200:
-                        full_body = await response.text()
-                        last_valid_json = None
-                        for line in full_body.strip().split('\n'):
-                            try:
-                                data = json.loads(line)
-                                if "error" in data:
-                                    self.log("error", f"LLM stream error: {data['error']}")
-                                    return f"Error from LLM service: {data['error']}"
-                                last_valid_json = data
-                            except json.JSONDecodeError:
-                                continue
-                        if last_valid_json and "final_response" in last_valid_json:
-                            return last_valid_json["final_response"].get("reply", "Error: Missing 'reply' key.")
-                        else:
-                            self.log("error", f"LLM response malformed. Body: {full_body}")
-                            return "Error: LLM final response was malformed."
-                    else:
-                        error_detail = await response.text()
-                        self.log("error", f"LLM service error {response.status}: {error_detail}")
-                        return f"Error: AI microservice failed. Status: {response.status}. Details: {error_detail}"
-        except Exception as e:
-            self.log("error", f"Error calling LLM service: {e}")
-            return f"An unexpected error occurred while calling the AI microservice: {e}"
-
-    async def _stream_code_to_client_and_accumulate(self, user_id: str, role: str, messages: List[Dict[str, Any]],
-                                                    file_path: str) -> str:
-        """
-        Streams code chunks to the client via WebSocket and returns the full code.
-        """
-        if not self.llm_server_url:
-            return "Error: LLM_SERVER_URL is not configured."
-
-        provider_name, model_name = self.llm_client.get_model_for_role(role)
-        api_key = crud.get_decrypted_key_for_provider(self.db, int(user_id), provider_name=provider_name)
-        if not all([provider_name, model_name, api_key]):
-            return f"Error: Missing config for role '{role}' or provider '{provider_name}'."
-
-        payload = {
-            "provider_name": provider_name, "model_name": model_name, "messages": messages,
-            "temperature": self.llm_client.get_role_temperature(role), "is_json": False, "tools": None,
-        }
-        headers = {"Content-Type": "application/json", "X-Provider-API-Key": api_key}
-        full_code_accumulator = []
-        is_first_chunk = True
-
-        try:
-            relative_path = str(Path(file_path).relative_to(self.project_manager.active_project_path))
-        except (ValueError, TypeError):
-            relative_path = Path(file_path).name
+        final_reply = ""
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -152,38 +92,28 @@ class DevelopmentTeamService:
                             continue
                         try:
                             data = json.loads(line)
-                            if "chunk" in data:
-                                chunk = data["chunk"]
-                                full_code_accumulator.append(chunk)
-                                await websocket_manager.broadcast_to_user({
-                                    "type": "code_chunk", "content": {
-                                        "filePath": relative_path, "chunk": chunk, "isFirstChunk": is_first_chunk
-                                    }}, user_id)
-                                is_first_chunk = False
-                            elif "error" in data:
-                                return f"Error from LLM service stream: {data['error']}"
+                            # 1. Immediately forward the structured message to the client.
+                            await websocket_manager.broadcast_to_user(data, str(user_id))
+
+                            # 2. If this is the final message, capture its content for the return value.
+                            if "final_response" in data and "reply" in data["final_response"]:
+                                final_reply = data["final_response"]["reply"]
                         except json.JSONDecodeError:
                             self.log("warning", f"Could not decode JSON line from stream: {line}")
                             continue
-
-            final_code = "".join(full_code_accumulator)
-            code_block_regex = re.compile(r'```(?:python)?\n(.*?)\n```', re.DOTALL)
-            match = code_block_regex.search(final_code)
-            return match.group(1).strip() if match else final_code.strip()
+            return final_reply
         except Exception as e:
-            self.log("error", f"Error during code streaming for user {user_id}: {e}")
-            return f"An unexpected error occurred during code streaming: {e}"
+            self.log("error", f"Error during unified streaming call for user {user_id}: {e}")
+            return f"An unexpected error occurred during streaming: {e}"
+
 
     def _parse_json_response(self, response: str) -> dict:
         try:
-            # First, try to load the whole string as JSON
             return json.loads(response)
         except json.JSONDecodeError:
-            # If that fails, find the JSON block within markdown
             match = re.search(r'```json\s*(\{.*?\})\s*```', response, re.DOTALL)
             if match:
                 return json.loads(match.group(1))
-            # If that also fails, try to find any JSON object
             match = re.search(r'\{.*\}', response, re.DOTALL)
             if not match:
                 raise ValueError(f"No JSON object found in the response. Raw response: {response}")
@@ -192,53 +122,38 @@ class DevelopmentTeamService:
     async def run_companion_chat(self, user_id: str, user_prompt: str, conversation_history: list) -> str:
         self.log("info", f"Companion chat initiated for user {user_id}: '{user_prompt[:50]}...'")
         history_str = "\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history])
-
-        prompt = COMPANION_PROMPT.format(
-            conversation_history=history_str,
-            user_prompt=user_prompt
-        )
-
+        prompt = COMPANION_PROMPT.format(conversation_history=history_str, user_prompt=user_prompt)
         messages = [{"role": "user", "content": prompt}]
-
         self.refresh_llm_assignments()
-        response_str = await self._make_llm_call(int(user_id), "chat", messages, is_json=False)
+
+        # The unified streamer handles both streaming to client and returning the final reply.
+        response_str = await self._unified_llm_streamer(int(user_id), "chat", messages)
 
         if response_str.startswith("Error:"):
             await self.handle_error(user_id, "Companion", response_str)
             return "I'm sorry, I seem to be having trouble connecting to my creative core right now."
-
         return response_str
 
     async def run_aura_planner_workflow(self, user_id: str, user_idea: str, conversation_history: list):
         self.log("info", f"Aura planner workflow initiated for user {user_id}: '{user_idea[:50]}...'")
-        prompt = AURA_PLANNER_PROMPT.format(
-            SENIOR_ARCHITECT_HEURISTIC_RULE=SENIOR_ARCHITECT_HEURISTIC_RULE.strip(),
-            user_idea=user_idea)
+        prompt = AURA_PLANNER_PROMPT.format(user_idea=user_idea)
         messages = [{"role": "user", "content": prompt}]
-
         self.refresh_llm_assignments()
-        response_str = await self._make_llm_call(int(user_id), "planner", messages, is_json=True)
 
-        if response_str.startswith("Error:"):
-            await self.handle_error(user_id, "Aura", response_str)
+        # The unified streamer handles both streaming phases to client and returning the final JSON.
+        response_str = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
+
+        if not response_str or response_str.startswith("Error:"):
+            await self.handle_error(user_id, "Aura", response_str or "Planner returned an empty response.")
             return
 
         try:
             plan_data = self._parse_json_response(response_str)
-
             critique = plan_data.get("critique", "No critique provided.")
             dependencies = plan_data.get("dependencies", [])
             self.log("info", f"Aura's Self-Critique: {critique}")
-
-            final_plan_data = plan_data.get("final_plan", [])
-            if isinstance(final_plan_data, dict) and "steps" in final_plan_data:
-                final_plan = final_plan_data["steps"]
-            elif isinstance(final_plan_data, list):
-                final_plan = final_plan_data
-            else:
-                final_plan = []
-
-            if not final_plan:
+            final_plan = plan_data.get("final_plan", [])
+            if not final_plan or not isinstance(final_plan, list):
                 raise ValueError("Aura's final_plan was empty or malformed after self-critique.")
 
             if dependencies:
@@ -255,26 +170,19 @@ class DevelopmentTeamService:
     def _get_relevant_plan_context(self, current_task_id: int, full_plan: List[Dict]) -> str:
         context_lines = []
         current_task_index = -1
-
         for i, task in enumerate(full_plan):
             if task.get('id') == current_task_id:
                 current_task_index = i
                 break
-
-        if current_task_index == -1:
-            return "Could not find the current task in the plan."
-
+        if current_task_index == -1: return "Could not find the current task in the plan."
         if current_task_index > 0:
             prev_task = full_plan[current_task_index - 1]
             context_lines.append(f"Previous Task (ID {prev_task['id']}): {prev_task['description']} [Status: {'Done' if prev_task['done'] else 'Pending'}]")
-
         current_task = full_plan[current_task_index]
         context_lines.append(f"--> CURRENT TASK (ID {current_task['id']}): {current_task['description']} [Status: Pending]")
-
         if current_task_index < len(full_plan) - 1:
             next_task = full_plan[current_task_index + 1]
             context_lines.append(f"Next Task (ID {next_task['id']}): {next_task['description']} [Status: Pending]")
-
         return "\n".join(context_lines)
 
 
@@ -282,26 +190,23 @@ class DevelopmentTeamService:
         self.log("info", f"Generating code for '{path}'...")
         file_tree = "\n".join(
             sorted(self.project_manager.get_project_files().keys())) or "The project is currently empty."
-
         full_plan = self.mission_log_service.get_tasks()
         relevant_plan_context = self._get_relevant_plan_context(current_task_id, full_plan)
-
         prompt = CODER_PROMPT_STREAMING.format(
-            path=path,
-            task_description=task_description,
-            file_tree=file_tree,
-            user_idea=user_idea,
+            path=path, task_description=task_description, file_tree=file_tree, user_idea=user_idea,
             relevant_plan_context=relevant_plan_context,
             MAESTRO_CODER_PHILOSOPHY_RULE=MAESTRO_CODER_PHILOSOPHY_RULE.strip(),
-            TYPE_HINTING_RULE=TYPE_HINTING_RULE.strip(),
-            DOCSTRING_RULE=DOCSTRING_RULE.strip(),
-            CLEAN_CODE_RULE=CLEAN_CODE_RULE.strip(),
-            RAW_CODE_OUTPUT_RULE=RAW_CODE_OUTPUT_RULE.strip()
-        )
+            TYPE_HINTING_RULE=TYPE_HINTING_RULE.strip(), DOCSTRING_RULE=DOCSTRING_RULE.strip(),
+            CLEAN_CODE_RULE=CLEAN_CODE_RULE.strip(), RAW_CODE_OUTPUT_RULE=RAW_CODE_OUTPUT_RULE.strip())
         messages = [{"role": "user", "content": prompt}]
-
         self.refresh_llm_assignments()
-        return await self._stream_code_to_client_and_accumulate(user_id, "coder", messages, path)
+
+        full_code = await self._unified_llm_streamer(int(user_id), "coder", messages)
+
+        code_block_regex = re.compile(r'```(?:python)?\n(.*?)\n```', re.DOTALL)
+        match = code_block_regex.search(full_code)
+        return match.group(1).strip() if match else full_code.strip()
+
 
     async def run_strategic_replan(self, user_id: str, original_goal: str, failed_task: Dict, mission_log: List[Dict]):
         self.log("info", "Strategic re-plan initiated.")
@@ -313,12 +218,12 @@ class DevelopmentTeamService:
             user_goal=original_goal, mission_log=mission_log_str,
             failed_task=failed_task_str, error_message=error_message)
         messages = [{"role": "user", "content": prompt}]
-
         self.refresh_llm_assignments()
-        response_str = await self._make_llm_call(int(user_id), "planner", messages, is_json=True)
 
-        if response_str.startswith("Error:"):
-            await self.handle_error(user_id, "Aura", response_str)
+        response_str = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
+
+        if not response_str or response_str.startswith("Error:"):
+            await self.handle_error(user_id, "Aura", response_str or "Re-planner returned an empty response.")
             return
 
         try:
@@ -339,17 +244,14 @@ class DevelopmentTeamService:
             return "Mission accomplished!"
         prompt = AURA_MISSION_SUMMARY_PROMPT.format(completed_tasks=task_descriptions)
         messages = [{"role": "user", "content": prompt}]
-
         self.refresh_llm_assignments()
-        summary = await self._make_llm_call(int(user_id), "chat", messages)
+        summary = await self._unified_llm_streamer(int(user_id), "chat", messages)
         return summary.strip() if summary.strip() else "Mission accomplished!"
 
     async def _post_chat_message(self, user_id: str, sender: str, message: str, is_error: bool = False):
         if message and message.strip():
             msg_data = {
-                "type": "aura_response" if sender.lower() == 'aura' else "system_log",
-                "content": message
-            }
+                "type": "aura_response" if sender.lower() == 'aura' else "system_log", "content": message}
             if is_error:
                 msg_data["type"] = "system_log"
             await websocket_manager.broadcast_to_user(msg_data, user_id)

@@ -1,4 +1,5 @@
 # llm_server/main.py
+# llm_server/main.py
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -33,9 +34,16 @@ async def stream_llm_response(
     request: LLMRequest,
     provider_specific_tools: Optional[List[Dict[str, Any]]]
 ) -> AsyncGenerator[str, None]:
-    """An async generator that yields JSON-wrapped chunks from the LLM provider."""
+    """
+    An async generator that yields structured JSON chunks from the LLM provider.
+    This now supports streaming intermediate "thinking" phases for planning.
+    """
     try:
-        full_response = ""
+        full_response_content = ""
+        json_accumulator = ""
+        brace_counter = 0
+        in_json_block = False
+
         async for chunk in provider.get_chat_response_stream(
             model_name=request.model_name,
             messages=request.messages,
@@ -43,20 +51,32 @@ async def stream_llm_response(
             is_json=request.is_json,
             tools=provider_specific_tools
         ):
-            full_response += chunk
-            # Wrap each individual chunk in a JSON object and yield it as a string with a newline.
-            # This makes the stream a valid newline-delimited JSON (ndjson) stream.
-            yield json.dumps({"chunk": chunk}) + "\n"
+            full_response_content += chunk
+
+            if request.is_json:
+                # This logic specifically handles streaming a single, large JSON object
+                # by identifying phases based on top-level keys.
+                json_accumulator += chunk
+                if '"draft_plan":' in json_accumulator and brace_counter == 1:
+                    yield json.dumps({"phase": "drafting", "content": "Drafting initial plan..."}) + "\n"
+                if '"critique":' in json_accumulator and brace_counter == 1:
+                    yield json.dumps({"phase": "critiquing", "content": "Critiquing the draft for architectural flaws..."}) + "\n"
+                if '"final_plan":' in json_accumulator and brace_counter == 1:
+                    yield json.dumps({"phase": "refining", "content": "Refining the final plan based on the critique..."}) + "\n"
+
+                brace_counter += chunk.count('{')
+                brace_counter -= chunk.count('}')
+            else:
+                # For non-JSON (e.g., code generation), stream simple chunks.
+                yield json.dumps({"chunk": chunk}) + "\n"
 
         # After the stream is complete, send a final object containing the full response.
-        # This is useful for clients that need to process the entire result at the end (e.g., for JSON validation).
-        final_payload = {"final_response": {"reply": full_response}}
+        final_payload = {"final_response": {"reply": full_response_content}}
         yield json.dumps(final_payload) + "\n"
 
     except Exception as e:
         error_message = f"Error during streaming: {e}"
         print(error_message)
-        # Yield a JSON error message so the client can handle it gracefully.
         yield json.dumps({"error": error_message}) + "\n"
 
 
@@ -87,10 +107,9 @@ async def invoke_llm(
     if request.tools:
         provider_specific_tools = provider.transform_tools_for_provider(request.tools)
 
-    # We now return a StreamingResponse, which will stream the output of our async generator.
     return StreamingResponse(
         stream_llm_response(provider, request, provider_specific_tools),
-        media_type="application/x-ndjson" # Use newline-delimited JSON for streaming chunks
+        media_type="application/x-ndjson"
     )
 
 @app.get("/health")
