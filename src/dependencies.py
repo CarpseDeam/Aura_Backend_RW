@@ -6,6 +6,7 @@ from src.event_bus import EventBus
 from src.core.managers import ProjectManager, ServiceManager
 from src.db.database import get_db, SessionLocal
 from src.api.auth import get_current_user
+from src.db import models, crud
 from src.db.models import User
 from src.services import (
     MissionLogService, VectorContextService, ToolRunnerService,
@@ -62,6 +63,15 @@ def get_aura_services(
     event_bus = EventBus()
     project_manager = ProjectManager(event_bus, workspace_path=str(user_workspace_path))
     llm_client = LLMClient()
+
+    # --- THE FIX: Pre-populate the LLM client with user's saved settings ---
+    assignments_from_db = crud.get_assignments_for_user(db, user_id=current_user.id)
+    if assignments_from_db:
+        llm_client.set_assignments({a.role_name: a.model_id for a in assignments_from_db})
+        llm_client.set_temperatures({a.role_name: a.temperature for a in assignments_from_db})
+        print(f"✅ LLM client pre-populated for user {current_user.id} with {len(assignments_from_db)} assignments.")
+    # --- END FIX ---
+
 
     # --- Step 2: Assemble the master ServiceManager ---
     # This manager will now be the single source of truth for all other services.
