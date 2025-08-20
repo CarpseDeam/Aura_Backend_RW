@@ -1,9 +1,12 @@
 # src/api/agent.py
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, status, Query
-from pantic import BaseModel
+
 from typing import List, Dict, Any
 from pathlib import Path
 import traceback
+
+from pydantic.v1 import BaseModel
+
 from src.core.websockets import websocket_manager
 
 from src.dependencies import get_aura_services, get_project_manager, rehydrate_services_for_background_task
