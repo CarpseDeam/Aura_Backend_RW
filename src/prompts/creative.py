@@ -22,15 +22,33 @@ AURA_PLANNER_PROMPT = textwrap.dedent("""
     Your response MUST be a single, valid JSON object with the following keys: `draft_plan`, `critique`, `final_plan`, `dependencies`.
     1.  `draft_plan`: Your initial, gut-reaction plan as a list of strings.
     2.  `critique`: A ruthless self-critique of your `draft_plan`. Does it follow best practices? Does it adhere to the FastAPI requirement?
-    3.  `final_plan`: Your improved final plan that directly addresses your `critique`, as a list of strings.
+    3.  `final_plan`: Your improved final plan that directly addresses your `critique`. This MUST be a list of simple, human-readable strings.
     4.  `dependencies`: A list of all `pip` installable packages required for the `final_plan`.
+
+    **--- NEW LAW: FINAL PLAN FORMATTING RULES ---**
+    - Each item in the `final_plan` list MUST be a single, concise, human-readable sentence describing one step.
+    - **DO NOT** use Markdown (like `**` or `##`).
+    - **DO NOT** use file tree formatting (like `|--` or `└──`).
+    - **DO NOT** include comments or any extra formatting within the strings. Each string is a task for a to-do list.
+
+    **--- GOOD EXAMPLE OF A `final_plan` ---**
+    ```json
+    "final_plan": [
+      "Create the main application directory named 'src'.",
+      "Create a file `src/main.py` to hold the FastAPI application instance.",
+      "Define a Pydantic model for the request body in `src/models.py`.",
+      "Implement the business logic for the primary endpoint in `src/services.py`.",
+      "Create the API router and define the endpoint in `src/router.py`.",
+      "Import and include the API router in `src/main.py`."
+    ]
+    ```
 
     ---
     **User's High-Level Goal:**
     `{{user_idea}}`
     ---
 
-    Generate the complete JSON object now.
+    Generate the complete JSON object now, strictly following all rules.
     """)
 
 AURA_REPLANNER_PROMPT = textwrap.dedent("""
