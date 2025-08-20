@@ -56,7 +56,7 @@ class DevelopmentTeamService:
 
     async def _unified_llm_streamer(self, user_id: int, role: str, messages: List[Dict[str, Any]],
                                     is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None,
-                                    is_code_stream: bool = False, file_path: Optional[str] = None) -> str:
+                                    stream_to_user_socket_as: Optional[str] = None, file_path: Optional[str] = None) -> str:
         llm_client = self.service_manager.llm_client
         db = self.service_manager.db
         if not self.llm_server_url:
@@ -90,18 +90,18 @@ class DevelopmentTeamService:
                             continue
                         try:
                             data = json.loads(line)
-                            await websocket_manager.broadcast_to_user(data, str(user_id))
+                            if data.get("type") == "chunk" and stream_to_user_socket_as:
+                                await websocket_manager.broadcast_to_user({
+                                    "type": stream_to_user_socket_as,
+                                    "content": {"filePath": file_path, "chunk": data.get("content", "")}
+                                }, str(user_id))
+                            else:
+                                await websocket_manager.broadcast_to_user(data, str(user_id))
+
                             if "final_response" in data and "reply" in data["final_response"]:
                                 final_reply = data["final_response"]["reply"]
                         except json.JSONDecodeError:
-                            if is_code_stream and file_path:
-                                char = line.decode('utf-8').rstrip('\n')
-                                await websocket_manager.broadcast_to_user({
-                                    "type": "code_stream",
-                                    "file_path": file_path,
-                                    "char": char
-                                }, str(user_id))
-                            elif is_json:
+                            if is_json:
                                 self.log("warning", f"Could not decode JSON line from stream: {line}")
                             continue
             return final_reply
@@ -115,7 +115,7 @@ class DevelopmentTeamService:
         try:
             return json.loads(response)
         except json.JSONDecodeError:
-            match = re.search(r'''json\s*(\{.*?\})\s*'''', response, re.DOTALL)
+            match = re.search(r''''json\s*(\{.*?\})\s*'''', response, re.DOTALL)
             if match:
                 return json.loads(match.group(1))
             match = re.search(r'\{.*\}', response, re.DOTALL)
@@ -217,7 +217,7 @@ class DevelopmentTeamService:
         messages = [{"role": "user", "content": prompt}]
         self.refresh_llm_assignments()
 
-        full_code = await self._unified_llm_streamer(int(user_id), "coder", messages, is_code_stream=True, file_path=path)
+        full_code = await self._unified_llm_streamer(int(user_id), "coder", messages, stream_to_user_socket_as='code_stream_chunk', file_path=path)
 
         code_block_regex = re.compile(r'''(?:python)?\n(.*?)\n'''', re.DOTALL)
         match = code_block_regex.search(full_code)
