@@ -65,7 +65,8 @@ async def stream_llm_response(
                 brace_counter += chunk.count('{')
                 brace_counter -= chunk.count('}')
             else:
-                yield json.dumps({"type": "chunk", "content": chunk}) + "\n"
+                for char in chunk:
+                    yield json.dumps({"type": "chunk", "content": char}) + "\n"
 
         # --- THE FIX ---
         # If after the entire stream, we have no content, it's an error.
