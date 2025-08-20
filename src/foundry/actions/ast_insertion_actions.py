@@ -44,7 +44,7 @@ def add_class_to_file(path: str, class_code: str) -> str:
         # Check if a class or function with the same name already exists and replace it.
         class_replaced = False
         for i, existing_node in enumerate(tree.body):
-            if isinstance(existing_node, (ast.ClassDef, ast.FunctionDef)) and existing_node.name == new_class_def.name:
+            if isinstance(existing_node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and existing_node.name == new_class_def.name:
                 tree.body[i] = new_class_def
                 class_replaced = True
                 break
@@ -94,7 +94,8 @@ def add_function_to_file(path: str, function_code: str) -> str:
 
         new_function_def = None
         for node in new_function_tree.body:
-            if isinstance(node, ast.FunctionDef):
+            # --- THE FIX: Recognize both 'def' and 'async def' ---
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 new_function_def = node
                 break
 
@@ -104,7 +105,7 @@ def add_function_to_file(path: str, function_code: str) -> str:
         # Check if a function with the same name already exists and replace it.
         function_replaced = False
         for i, existing_node in enumerate(tree.body):
-            if isinstance(existing_node, ast.FunctionDef) and existing_node.name == new_function_def.name:
+            if isinstance(existing_node, (ast.FunctionDef, ast.AsyncFunctionDef)) and existing_node.name == new_function_def.name:
                 tree.body[i] = new_function_def
                 function_replaced = True
                 break

@@ -2,8 +2,12 @@
 import os
 
 # Gunicorn config variables
-# Use the WEB_CONCURRENCY env var if set, otherwise default to a sensible number.
-workers = int(os.environ.get('WEB_CONCURRENCY', 4))
+# --- THE FIX: Force a single worker process ---
+# In a multi-worker environment, the in-memory WebSocketManager singleton is not shared,
+# causing background tasks (like plan execution) to lose track of the user's WebSocket
+# connection, which is handled by a different worker. Forcing a single worker ensures
+# that all operations occur in the same process, making the in-memory manager reliable.
+workers = 1
 worker_class = 'uvicorn.workers.UvicornWorker'
 
 # Bind to the port specified by the PORT env var.

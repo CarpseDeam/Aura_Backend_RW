@@ -81,6 +81,22 @@ class ToolRunnerService:
 
         print(f"▶️  Executing: {action_id} with params {display_params}")
 
+        # --- NEW UX IMPROVEMENT ---
+        # If we're about to write a file, notify the UI immediately so it can
+        # open a tab and show a pending state.
+        if action_id == 'write_file' and 'path' in execution_params:
+            project_manager = self.service_manager.project_manager
+            try:
+                full_path = Path(execution_params['path'])
+                relative_path = str(full_path.relative_to(project_manager.active_project_path))
+                await websocket_manager.broadcast_to_user({
+                    "type": "file_writing_pending",
+                    "content": {"filePath": relative_path}
+                }, user_id)
+            except Exception as e:
+                # Non-critical error, just log it.
+                logger.warning(f"Could not send file_writing_pending message: {e}")
+
         await asyncio.sleep(0.1)
 
         result = None
