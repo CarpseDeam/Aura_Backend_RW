@@ -5,7 +5,7 @@ from typing import List, Dict, Any
 from pathlib import Path
 import traceback
 
-from pydantic.v1 import BaseModel
+from pydantic import BaseModel
 
 from src.core.websockets import websocket_manager
 
@@ -108,6 +108,8 @@ class DispatchRequest(BaseModel):
 class ChatRequest(BaseModel):
     prompt: str
     history: List[Dict[str, Any]]
+    project_name: str
+
 
 class FileWriteRequest(BaseModel):
     path: str
@@ -120,6 +122,18 @@ async def agent_chat(
         current_user: User = Depends(get_current_user),
         aura_services: ServiceManager = Depends(get_aura_services)
 ):
+    project_manager: ProjectManager = aura_services.project_manager
+    mission_log_service: MissionLogService = aura_services.mission_log_service
+
+    project_path = project_manager.load_project(request.project_name)
+    if not project_path:
+        raise HTTPException(status_code=404, detail=f"Project '{request.project_name}' not found.")
+
+    vcs: VectorContextService = aura_services.vector_context_service
+    if vcs:
+        vcs.load_for_project(Path(project_path))
+    mission_log_service.load_log_for_active_project()
+
     dev_team: DevelopmentTeamService = aura_services.development_team_service
     response_text = await dev_team.run_companion_chat(
         user_id=str(current_user.id),
