@@ -54,8 +54,6 @@ async def stream_llm_response(
             full_response_content += chunk
 
             if request.is_json:
-                # This logic specifically handles streaming a single, large JSON object
-                # by identifying phases based on top-level keys.
                 json_accumulator += chunk
                 if '"draft_plan":' in json_accumulator and brace_counter == 1:
                     yield json.dumps({"type": "phase", "content": "Drafting initial plan..."}) + "\n"
@@ -67,10 +65,15 @@ async def stream_llm_response(
                 brace_counter += chunk.count('{')
                 brace_counter -= chunk.count('}')
             else:
-                # For non-JSON (e.g., code generation), stream simple chunks.
                 yield json.dumps({"type": "chunk", "content": chunk}) + "\n"
 
-        # After the stream is complete, send a final object containing the full response.
+        # --- THE FIX ---
+        # If after the entire stream, we have no content, it's an error.
+        if not full_response_content.strip():
+            error_message = "The AI model returned an empty response. This may be due to a content filter or an internal model error. Please try again."
+            yield json.dumps({"type": "system_log", "content": error_message}) + "\n"
+            return
+
         final_payload = {"final_response": {"reply": full_response_content}}
         yield json.dumps(final_payload) + "\n"
 
