@@ -33,7 +33,7 @@ def add_parameter_to_function(path: str, function_name: str, parameter_name: str
         tree = ast.parse(content)
         func_node = None
         for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == function_name:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name:
                 func_node = node
                 break
 
@@ -204,7 +204,7 @@ def add_decorator_to_function(path: str, function_name: str, decorator_code: str
         target_function = None
         # We use ast.walk to find the function, even if it's nested inside a class.
         for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and node.name == function_name:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name:
                 target_function = node
                 break
 
@@ -247,6 +247,12 @@ class RenameTransformer(ast.NodeTransformer):
         return node
 
     def visit_FunctionDef(self, node):
+        if node.name == self.old_name:
+            node.name = self.new_name
+        self.generic_visit(node)
+        return node
+
+    def visit_AsyncFunctionDef(self, node):
         if node.name == self.old_name:
             node.name = self.new_name
         self.generic_visit(node)
@@ -322,8 +328,8 @@ def append_to_function(path: str, function_name: str, code_to_append: str) -> st
         append_nodes = ast.parse(code_to_append).body
 
         target_function = None
-        for node in tree.body:
-            if isinstance(node, ast.FunctionDef) and node.name == function_name:
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == function_name:
                 target_function = node
                 break
 
@@ -387,7 +393,7 @@ def replace_node_in_file(path: str, node_name: str, new_code: str) -> str:
         new_code_tree = ast.parse(new_code)
 
         # Ensure the new code contains one valid top-level node
-        if not new_code_tree.body or not isinstance(new_code_tree.body[0], (ast.FunctionDef, ast.ClassDef)):
+        if not new_code_tree.body or not isinstance(new_code_tree.body[0], (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             return f"Error: The provided `new_code` does not contain a single, valid top-level function or class definition."
 
         new_node = new_code_tree.body[0]
@@ -399,7 +405,7 @@ def replace_node_in_file(path: str, node_name: str, new_code: str) -> str:
         # Find the node to replace in the original tree
         node_replaced = False
         for i, existing_node in enumerate(tree.body):
-            if isinstance(existing_node, (ast.FunctionDef, ast.ClassDef)) and existing_node.name == node_name:
+            if isinstance(existing_node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and existing_node.name == node_name:
                 tree.body[i] = new_node
                 node_replaced = True
                 break
@@ -443,7 +449,7 @@ def replace_method_in_class(path: str, class_name: str, method_name: str, new_co
         tree = ast.parse(content)
         new_code_tree = ast.parse(new_code)
 
-        if not new_code_tree.body or not isinstance(new_code_tree.body[0], ast.FunctionDef):
+        if not new_code_tree.body or not isinstance(new_code_tree.body[0], (ast.FunctionDef, ast.AsyncFunctionDef)):
             return f"Error: The provided `new_code` does not contain a single, valid method definition."
 
         new_method_node = new_code_tree.body[0]
@@ -464,7 +470,7 @@ def replace_method_in_class(path: str, class_name: str, method_name: str, new_co
         # Find and replace the method within the class body
         method_replaced = False
         for i, class_body_node in enumerate(class_node.body):
-            if isinstance(class_body_node, ast.FunctionDef) and class_body_node.name == method_name:
+            if isinstance(class_body_node, (ast.FunctionDef, ast.AsyncFunctionDef)) and class_body_node.name == method_name:
                 class_node.body[i] = new_method_node
                 method_replaced = True
                 break

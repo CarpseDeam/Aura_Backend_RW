@@ -44,7 +44,8 @@ def add_class_to_file(path: str, class_code: str) -> str:
         # Check if a class or function with the same name already exists and replace it.
         class_replaced = False
         for i, existing_node in enumerate(tree.body):
-            if isinstance(existing_node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and existing_node.name == new_class_def.name:
+            if isinstance(existing_node, (ast.ClassDef, ast.FunctionDef,
+                                          ast.AsyncFunctionDef)) and existing_node.name == new_class_def.name:
                 tree.body[i] = new_class_def
                 class_replaced = True
                 break
@@ -105,7 +106,8 @@ def add_function_to_file(path: str, function_code: str) -> str:
         # Check if a function with the same name already exists and replace it.
         function_replaced = False
         for i, existing_node in enumerate(tree.body):
-            if isinstance(existing_node, (ast.FunctionDef, ast.AsyncFunctionDef)) and existing_node.name == new_function_def.name:
+            if isinstance(existing_node,
+                          (ast.FunctionDef, ast.AsyncFunctionDef)) and existing_node.name == new_function_def.name:
                 tree.body[i] = new_function_def
                 function_replaced = True
                 break
@@ -131,7 +133,7 @@ def add_function_to_file(path: str, function_code: str) -> str:
         return error_message
 
 
-def add_method_to_class(path: str, class_name: str, name: str, args: list) -> str:
+def add_method_to_class(path: str, class_name: str, name: str, args: list, is_async: bool = False) -> str:
     """
     Adds an empty method to a class in a given file.
 
@@ -140,6 +142,7 @@ def add_method_to_class(path: str, class_name: str, name: str, args: list) -> st
         class_name: The name of the class to modify.
         name: The name of the new method.
         args: The arguments for the new method.
+        is_async: If True, creates an 'async def' method.
 
     Returns:
         A string indicating success or failure.
@@ -169,9 +172,16 @@ def add_method_to_class(path: str, class_name: str, name: str, args: list) -> st
             posonlyargs=[], kwonlyargs=[], kw_defaults=[], defaults=[]
         )
         method_body = [ast.Pass()]
-        new_method = ast.FunctionDef(
-            name=name, args=arguments, body=method_body, decorator_list=[]
-        )
+
+        # --- THE FIX: Create either a sync or async function definition ---
+        if is_async:
+            new_method = ast.AsyncFunctionDef(
+                name=name, args=arguments, body=method_body, decorator_list=[]
+            )
+        else:
+            new_method = ast.FunctionDef(
+                name=name, args=arguments, body=method_body, decorator_list=[]
+            )
 
         if len(class_node.body) == 1 and isinstance(class_node.body[0], ast.Pass):
             class_node.body = []
