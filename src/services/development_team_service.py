@@ -136,9 +136,6 @@ class DevelopmentTeamService:
 
         response_str = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
 
-        # --- THE FIX ---
-        # This block now handles all error conditions from the streamer, ensuring
-        # a non-empty, user-facing error message is always sent.
         if not response_str or response_str.strip().startswith("Error:"):
             error_content = response_str or "The Architect AI returned an empty or invalid response. This can happen if the model is overloaded or if it responded with a format that could not be understood (e.g., a tool call instead of a JSON plan)."
             await self.handle_error(user_id, "Aura", error_content)
@@ -191,7 +188,6 @@ class DevelopmentTeamService:
         mission_log_service = self.service_manager.mission_log_service
         self.log("info", f"Generating code for '{path}'...")
 
-        # --- NEW: Data Contract Injection ---
         schema_content = project_manager.read_file('src/schemas.py') or "# src/schemas.py not found or is empty."
         models_content = project_manager.read_file('src/models.py') or "# src/models.py not found or is empty."
         schema_and_models_context = f"--- Contents of src/schemas.py ---\n{schema_content}\n\n--- Contents of src/models.py ---\n{models_content}"
@@ -204,7 +200,7 @@ class DevelopmentTeamService:
         prompt = CODER_PROMPT_STREAMING.format(
             path=path, task_description=task_description, file_tree=file_tree, user_idea=user_idea,
             relevant_plan_context=relevant_plan_context,
-            schema_and_models_context=schema_and_models_context,  # <-- NEW
+            schema_and_models_context=schema_and_models_context,
             MAESTRO_CODER_PHILOSOPHY_RULE=MAESTRO_CODER_PHILOSOPHY_RULE.strip(),
             TYPE_HINTING_RULE=TYPE_HINTING_RULE.strip(), DOCSTRING_RULE=DOCSTRING_RULE.strip(),
             CLEAN_CODE_RULE=CLEAN_CODE_RULE.strip(), RAW_CODE_OUTPUT_RULE=RAW_CODE_OUTPUT_RULE.strip())
@@ -228,3 +224,48 @@ class DevelopmentTeamService:
         prompt = AURA_REPLANNER_PROMPT.format(
             user_goal=original_goal, mission_log=mission_log_str,
             failed_task=failed_task_str, error_message=error_message)
+        messages = [{"role": "user", "content": prompt}]
+        self.refresh_llm_assignments()
+
+        response_str = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
+
+        if not response_str or response_str.startswith("Error:"):
+            await self.handle_error(user_id, "Aura", response_str or "Re-planner returned an empty response.")
+            return
+
+        try:
+            new_plan_data = self._parse_json_response(response_str)
+            new_plan_steps = new_plan_data.get("plan", [])
+            if not new_plan_steps:
+                raise ValueError("Re-planner returned an empty or malformed plan.")
+            await mission_log_service.replace_tasks_from_id(user_id, failed_task['id'], new_plan_steps)
+            self.log("success", f"Successfully replaced failed task for user {user_id} with a new plan.")
+            await self._post_chat_message(user_id, "Aura", "I have a new plan. Resuming execution.")
+        except (ValueError, json.JSONDecodeError) as e:
+            await self.handle_error(user_id, "Aura", f"I failed to create a valid recovery plan: {e}")
+            self.log("error", f"Aura re-planner failure for user {user_id}. Raw response: {response_str}")
+
+    async def generate_mission_summary(self, user_id: str, completed_tasks: List[Dict]) -> str:
+        task_descriptions = "\n".join([f"- {task['description']}" for task in completed_tasks if task['done']])
+        if not task_descriptions:
+            return "Mission accomplished!"
+        prompt = AURA_MISSION_SUMMARY_PROMPT.format(completed_tasks=task_descriptions)
+        messages = [{"role": "user", "content": prompt}]
+        self.refresh_llm_assignments()
+        summary = await self._unified_llm_streamer(int(user_id), "chat", messages)
+        return summary.strip() if summary.strip() else "Mission accomplished!"
+
+    async def _post_chat_message(self, user_id: str, sender: str, message: str, is_error: bool = False):
+        if message and message.strip():
+            msg_data = {
+                "type": "aura_response" if sender.lower() == 'aura' else "system_log", "content": message}
+            if is_error:
+                msg_data["type"] = "system_log"
+            await websocket_manager.broadcast_to_user(msg_data, user_id)
+
+    async def handle_error(self, user_id: str, agent: str, error_msg: str):
+        self.log("error", f"{agent} failed for user {user_id}: {error_msg}")
+        await self._post_chat_message(user_id, "Aura", error_msg, is_error=True)
+
+    def log(self, level: str, message: str):
+        self.event_bus.emit("log_message_received", "DevTeamService", level, message)
