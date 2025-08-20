@@ -110,11 +110,9 @@ class ConductorService:
         self.is_mission_active = True
         self.original_user_goal = self.mission_log_service.get_initial_goal()
         try:
-            await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "thinking"}, user_id)
             await self.execute_mission(user_id)
         finally:
             self.is_mission_active = False
-            await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "idle"}, user_id)
             self.log("info", f"Conductor finished mission for user {user_id}.")
 
     async def execute_mission(self, user_id: str):
