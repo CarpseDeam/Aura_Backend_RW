@@ -14,24 +14,20 @@ logger = logging.getLogger(__name__)
 
 
 class VectorContextService:
-    def __init__(self, user_db_session: Session, user_id: int):
-        logger.info(f"Initializing VectorContextService for user {user_id}")
+    def __init__(self):
+        logger.info(f"Initializing VectorContextService")
         self.client = None
         self.collection = None
         self.project_root: Path | None = None
-        self.db_session = user_db_session
-        self.user_id = user_id
-        # The embedding function is now part of the service itself.
-        # Using a popular, lightweight, and effective model.
         self.embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name="all-MiniLM-L6-v2"
         )
         logger.info("Using Hugging Face SentenceTransformer for embeddings.")
 
-    def load_for_project(self, project_path: Path):
+    def load_for_project(self, project_path: Path, user_id: int):
         """
-        Loads or creates the vector database for a specific project using a
-        local, file-based ChromaDB and a Hugging Face embedding model.
+        Loads or creates the vector database for a specific project.
+        The user_id is now passed in at load time to ensure the correct context.
         """
         self.project_root = project_path
         rag_db_path = project_path / ".rag_db"
@@ -39,14 +35,11 @@ class VectorContextService:
         logger.info(f"Using local file-based vector database for project at: {rag_db_path}")
         self.client = chromadb.PersistentClient(
             path=str(rag_db_path),
-            # --- THE FIX: Explicitly disable the buggy telemetry client ---
             settings=Settings(anonymized_telemetry=False)
         )
 
-        collection_name = f"aura_project_{self.user_id}_{project_path.name.replace(' ', '_').replace('.', '_')}"
+        collection_name = f"aura_project_{user_id}_{project_path.name.replace(' ', '_').replace('.', '_')}"
 
-        # When creating the collection, we now provide the embedding function directly.
-        # ChromaDB will handle the embedding process automatically from here on.
         self.collection = self.client.get_or_create_collection(
             name=collection_name,
             embedding_function=self.embedding_function,
@@ -58,15 +51,12 @@ class VectorContextService:
         if not self.collection or not self.client or not self.project_root:
             raise RuntimeError("VectorContextService has not been loaded for a project. Call load_for_project() first.")
 
-    # The OpenAI-specific methods `_initialize_openai_client` and `_get_embeddings` are now REMOVED.
-
     async def add_documents(self, documents: List[str], metadatas: List[Dict[str, Any]]):
         self._ensure_project_loaded()
         if not documents:
             logger.warning("add_documents called with no documents.")
             return
 
-        # No need to get embeddings manually anymore. ChromaDB does it for us.
         ids = [f"{meta['file_path']}-{meta.get('node_type', 'file')}-{meta.get('node_name', '')}" for meta in metadatas]
 
         self.collection.upsert(
@@ -81,7 +71,6 @@ class VectorContextService:
         if self.collection.count() == 0:
             return []
 
-        # No need to embed the query manually. ChromaDB does it for us.
         results = self.collection.query(
             query_texts=[query_text],
             n_results=n_results
@@ -137,7 +126,6 @@ class VectorContextService:
             logger.info(f"No functions or classes found in {relative_path_str}. Nothing new to index.")
             return
 
-        # Use the async add_documents which now implicitly uses HF
         await self.add_documents(documents, metadatas)
         logger.info(f"Successfully re-indexed {len(documents)} chunks for file: {relative_path_str}")
 
