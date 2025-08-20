@@ -38,13 +38,10 @@ AURA_PLANNER_PROMPT = textwrap.dedent("""
     }}
     ```
     ---
-    **CORE OBJECTIVE:**
-    The user wants to build: "{{user_idea}}"
+    **User's High-Level Goal:**
+    `{{user_idea}}`
 
-    **CRITICAL INSTRUCTION:**
-    - The user's request is for a **URL Shortener**.
-    - This involves storing and retrieving URLs from a database and handling redirects.
-    - This is **NOT** a web scraping task. Do not include tools like BeautifulSoup or scraping-focused libraries unless explicitly asked for. Focus on the database, API endpoints, and simple frontend.
+    Based on this goal, create a plan. The project is a **URL Shortener**, which involves storing URLs in a database and handling redirects. It is **NOT** a web scraping project.
     ---
 
     Now, provide the complete JSON object following the Self-Critique Chain of Thought format.

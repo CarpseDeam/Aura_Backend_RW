@@ -133,11 +133,9 @@ class DevelopmentTeamService:
         full_code_accumulator = []
         is_first_chunk = True
 
-        # --- THE FIX: Convert absolute path to relative for the frontend ---
         try:
             relative_path = str(Path(file_path).relative_to(self.project_manager.active_project_path))
         except (ValueError, TypeError):
-            # Fallback if path isn't in the project (should not happen in normal flow)
             relative_path = Path(file_path).name
 
         try:
@@ -148,7 +146,6 @@ class DevelopmentTeamService:
                         error_detail = await response.text()
                         return f"Error: LLM service failed with status {response.status}. Details: {error_detail}"
 
-                    # --- THE FIX: Correctly read the newline-delimited stream ---
                     while not response.content.at_eof():
                         line = await response.content.readline()
                         if not line:
@@ -179,8 +176,14 @@ class DevelopmentTeamService:
 
     def _parse_json_response(self, response: str) -> dict:
         try:
+            # First, try to load the whole string as JSON
             return json.loads(response)
         except json.JSONDecodeError:
+            # If that fails, find the JSON block within markdown
+            match = re.search(r'```json\s*(\{.*?\})\s*```', response, re.DOTALL)
+            if match:
+                return json.loads(match.group(1))
+            # If that also fails, try to find any JSON object
             match = re.search(r'\{.*\}', response, re.DOTALL)
             if not match:
                 raise ValueError(f"No JSON object found in the response. Raw response: {response}")
@@ -197,7 +200,6 @@ class DevelopmentTeamService:
 
         messages = [{"role": "user", "content": prompt}]
 
-        # Refresh assignments just-in-time
         self.refresh_llm_assignments()
         response_str = await self._make_llm_call(int(user_id), "chat", messages, is_json=False)
 
@@ -209,13 +211,11 @@ class DevelopmentTeamService:
 
     async def run_aura_planner_workflow(self, user_id: str, user_idea: str, conversation_history: list):
         self.log("info", f"Aura planner workflow initiated for user {user_id}: '{user_idea[:50]}...'")
-        history_str = "\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history])
         prompt = AURA_PLANNER_PROMPT.format(
             SENIOR_ARCHITECT_HEURISTIC_RULE=SENIOR_ARCHITECT_HEURISTIC_RULE.strip(),
-            conversation_history=history_str, user_idea=user_idea)
+            user_idea=user_idea)
         messages = [{"role": "user", "content": prompt}]
 
-        # Refresh assignments just-in-time
         self.refresh_llm_assignments()
         response_str = await self._make_llm_call(int(user_id), "planner", messages, is_json=True)
 
@@ -230,7 +230,6 @@ class DevelopmentTeamService:
             dependencies = plan_data.get("dependencies", [])
             self.log("info", f"Aura's Self-Critique: {critique}")
 
-            # --- THE FIX: Defensively handle the plan data ---
             final_plan_data = plan_data.get("final_plan", [])
             if isinstance(final_plan_data, dict) and "steps" in final_plan_data:
                 final_plan = final_plan_data["steps"]
@@ -242,7 +241,6 @@ class DevelopmentTeamService:
             if not final_plan:
                 raise ValueError("Aura's final_plan was empty or malformed after self-critique.")
 
-            # If the plan includes dependencies, prepend a task to add them
             if dependencies:
                 deps_str = ", ".join(dependencies)
                 final_plan.insert(0, f"Add the following dependencies to requirements.txt: {deps_str}")
@@ -255,7 +253,6 @@ class DevelopmentTeamService:
             self.log("error", f"Aura planner failure for user {user_id}. Raw response: {response_str}")
 
     def _get_relevant_plan_context(self, current_task_id: int, full_plan: List[Dict]) -> str:
-        """Assembles a small, relevant context snippet from the full mission plan."""
         context_lines = []
         current_task_index = -1
 
@@ -267,16 +264,13 @@ class DevelopmentTeamService:
         if current_task_index == -1:
             return "Could not find the current task in the plan."
 
-        # Add the task before
         if current_task_index > 0:
             prev_task = full_plan[current_task_index - 1]
             context_lines.append(f"Previous Task (ID {prev_task['id']}): {prev_task['description']} [Status: {'Done' if prev_task['done'] else 'Pending'}]")
 
-        # Add the current task
         current_task = full_plan[current_task_index]
         context_lines.append(f"--> CURRENT TASK (ID {current_task['id']}): {current_task['description']} [Status: Pending]")
 
-        # Add the task after
         if current_task_index < len(full_plan) - 1:
             next_task = full_plan[current_task_index + 1]
             context_lines.append(f"Next Task (ID {next_task['id']}): {next_task['description']} [Status: Pending]")
@@ -285,12 +279,10 @@ class DevelopmentTeamService:
 
 
     async def _generate_code_for_task(self, user_id: str, path: str, task_description: str, user_idea: str, current_task_id: int) -> str:
-        """Dedicated method to invoke the Coder AI to generate code for a file."""
         self.log("info", f"Generating code for '{path}'...")
         file_tree = "\n".join(
             sorted(self.project_manager.get_project_files().keys())) or "The project is currently empty."
 
-        # Assemble the lean, just-in-time context for the Coder
         full_plan = self.mission_log_service.get_tasks()
         relevant_plan_context = self._get_relevant_plan_context(current_task_id, full_plan)
 
@@ -308,7 +300,6 @@ class DevelopmentTeamService:
         )
         messages = [{"role": "user", "content": prompt}]
 
-        # Refresh assignments just-in-time
         self.refresh_llm_assignments()
         return await self._stream_code_to_client_and_accumulate(user_id, "coder", messages, path)
 
@@ -323,7 +314,6 @@ class DevelopmentTeamService:
             failed_task=failed_task_str, error_message=error_message)
         messages = [{"role": "user", "content": prompt}]
 
-        # Refresh assignments just-in-time
         self.refresh_llm_assignments()
         response_str = await self._make_llm_call(int(user_id), "planner", messages, is_json=True)
 
@@ -350,7 +340,6 @@ class DevelopmentTeamService:
         prompt = AURA_MISSION_SUMMARY_PROMPT.format(completed_tasks=task_descriptions)
         messages = [{"role": "user", "content": prompt}]
 
-        # Refresh assignments just-in-time
         self.refresh_llm_assignments()
         summary = await self._make_llm_call(int(user_id), "chat", messages)
         return summary.strip() if summary.strip() else "Mission accomplished!"
