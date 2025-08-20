@@ -1,12 +1,11 @@
 # src/api/agent.py
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, status, Query
-from pydantic import BaseModel
+from pantic import BaseModel
 from typing import List, Dict, Any
 from pathlib import Path
 import traceback
 from src.core.websockets import websocket_manager
 
-# --- THE FIX: Import the new rehydration function ---
 from src.dependencies import get_aura_services, get_project_manager, rehydrate_services_for_background_task
 from src.core.managers import ServiceManager, ProjectManager
 from src.services import DevelopmentTeamService, ConductorService, MissionLogService, VectorContextService
@@ -14,7 +13,6 @@ from src.db.models import User
 from src.api.auth import get_current_user
 
 
-# --- THE FIX: A completely robust wrapper for the planner task ---
 async def run_planner_task_wrapper(
         services: ServiceManager, user_id: int, project_name: str, user_idea: str, history: List[Dict[str, Any]]
 ):
@@ -24,10 +22,7 @@ async def run_planner_task_wrapper(
     """
     db = None
     try:
-        # --- THE FIX: Signal that the background task has started ---
-        await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "thinking"}, str(user_id))
         db = rehydrate_services_for_background_task(services, user_id)
-        # --- CRITICAL FIX: Ensure the background task has the correct project context ---
         services.project_manager.load_project(project_name)
         services.mission_log_service.load_log_for_active_project()
 
@@ -44,11 +39,10 @@ async def run_planner_task_wrapper(
     finally:
         if db:
             db.close()
-        # --- THE FIX: Signal that the background task has finished ---
+        # --- THE FIX: We now send an idle signal on ANY exit path ---
         await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "idle"}, str(user_id))
 
 
-# --- THE FIX: A completely robust wrapper for the dispatcher task ---
 async def run_dispatch_task_wrapper(services: ServiceManager, user_id: int):
     """
     Creates a new DB session and re-hydrates the entire service stack for the
@@ -56,8 +50,6 @@ async def run_dispatch_task_wrapper(services: ServiceManager, user_id: int):
     """
     db = None
     try:
-        # --- THE FIX: Signal that the background task has started ---
-        await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "thinking"}, str(user_id))
         db = rehydrate_services_for_background_task(services, user_id)
         await services.conductor_service.execute_mission_in_background(user_id=str(user_id))
     except Exception as e:
@@ -70,7 +62,7 @@ async def run_dispatch_task_wrapper(services: ServiceManager, user_id: int):
     finally:
         if db:
             db.close()
-        # --- THE FIX: Signal that the background task has finished ---
+        # --- THE FIX: We now send an idle signal on ANY exit path ---
         await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "idle"}, str(user_id))
 
 async def run_reindex_task_wrapper(
@@ -82,7 +74,6 @@ async def run_reindex_task_wrapper(
     except Exception as e:
         print(f"BACKGROUND RE-INDEXING FAILED for {file_path}: {e}")
 
-# --- NEW: Wrapper for the auto-indexing background task ---
 async def run_initial_project_index_wrapper(
     vcs: VectorContextService, project_path: Path
 ):
@@ -192,7 +183,7 @@ async def dispatch_agent_mission(
 
     background_tasks.add_task(
         run_dispatch_task_wrapper,
-        services=aura_services, # Pass the whole service manager
+        services=aura_services,
         user_id=current_user.id
     )
     return {"message": "Dispatch acknowledged. Aura is now executing the mission plan."}
@@ -221,7 +212,6 @@ async def create_new_project(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create project: {e}")
 
-# --- NEW ENDPOINT FOR AUTO-INDEXING ---
 @router.post("/{project_name}/load", status_code=status.HTTP_200_OK)
 async def load_project_and_auto_index(
     project_name: str,
@@ -229,10 +219,6 @@ async def load_project_and_auto_index(
     current_user: User = Depends(get_current_user),
     aura_services: ServiceManager = Depends(get_aura_services)
 ):
-    """
-    Loads a project and triggers a one-time, automatic background index
-    if the project's vector database is empty.
-    """
     project_manager: ProjectManager = aura_services.project_manager
     project_path_str = project_manager.load_project(project_name)
     if not project_path_str:
@@ -244,7 +230,6 @@ async def load_project_and_auto_index(
 
     if vcs:
         vcs.load_for_project(project_path)
-        # Check if the collection is empty.
         if vcs.collection and vcs.collection.count() == 0:
             message += " Initial project scan for AI context has been started in the background."
             background_tasks.add_task(
@@ -253,7 +238,6 @@ async def load_project_and_auto_index(
                 project_path=project_path
             )
 
-    # --- THE FIX: Send the file tree to the UI after loading ---
     try:
         file_tree = project_manager.get_file_tree()
         await websocket_manager.broadcast_to_user({
@@ -262,7 +246,6 @@ async def load_project_and_auto_index(
         }, str(current_user.id))
     except Exception as e:
         print(f"Error sending file tree for user {current_user.id}: {e}")
-        # Don't fail the whole request, just log the error.
 
     return {"message": message}
 
