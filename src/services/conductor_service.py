@@ -183,6 +183,9 @@ class ConductorService:
                     await self._post_chat_message(user_id, "Aura", "I'm stuck. Rethinking my approach.", is_error=True)
                     await self._execute_strategic_replan(user_id, current_task)
                 else:
+                    # --- THE FIX ---
+                    # Add a small delay to allow filesystem changes to propagate before the next loop.
+                    # This prevents the "File not found" errors in the log.
                     await asyncio.sleep(0.5)
 
         except Exception as e:
