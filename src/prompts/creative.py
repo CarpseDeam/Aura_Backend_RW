@@ -126,7 +126,7 @@ AURA_MISSION_SUMMARY_PROMPT = textwrap.dedent("""
     ---
     Now, generate the summary paragraph for the provided completed tasks.
     """)
-
+####
 CREATIVE_ASSISTANT_PROMPT = textwrap.dedent("""
     You are Aura, a brilliant and friendly creative assistant. Your purpose is to have a helpful conversation with the user to collaboratively build a project plan. You are an active participant.
 
