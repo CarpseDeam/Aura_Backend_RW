@@ -2,6 +2,8 @@
 import logging
 import asyncio
 import json
+import re
+import ast
 from typing import Dict, Optional, List, Any, TYPE_CHECKING
 
 from src.core.websockets import websocket_manager
@@ -54,6 +56,49 @@ class ConductorService:
         if last_error:
             current_task_description += f"\n\n**PREVIOUS ATTEMPT FAILED!** Last error: `{last_error}`. You MUST try a different approach."
 
+        # --- CONTEXT WEAVER IMPLEMENTATION ---
+        active_file_context = "No specific file context was identified for this task. You might be creating a new file."
+        path_pattern = re.compile(r'([\w./-]+\.[\w]+)')
+        match = path_pattern.search(current_task_description)
+
+        if match:
+            relative_path_str = match.group(1)
+            # Heuristic to avoid matching version numbers like 'v1.0'
+            if '/' in relative_path_str or relative_path_str.endswith(('.py', '.md', '.txt', '.json', '.toml')):
+                file_content = project_manager.read_file(relative_path_str)
+                if file_content:
+                    self.log("info", f"Context Weaver: Found and read active file: {relative_path_str}")
+                    context_parts = [f"**Active File Context for `{relative_path_str}`:**\n"]
+                    if relative_path_str.endswith(".py"):
+                        try:
+                            tree = ast.parse(file_content)
+                            imports, functions, classes = set(), set(), set()
+                            for node in tree.body:
+                                if isinstance(node, ast.Import):
+                                    for alias in node.names: imports.add(alias.name)
+                                elif isinstance(node, ast.ImportFrom):
+                                    if node.module: imports.add(node.module)
+                                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                                    functions.add(node.name)
+                                elif isinstance(node, ast.ClassDef):
+                                    classes.add(node.name)
+
+                            if imports: context_parts.append(f"- Imports: {', '.join(sorted(list(imports)))}")
+                            if functions: context_parts.append(f"- Functions: {', '.join(sorted(list(functions)))}")
+                            if classes: context_parts.append(f"- Classes: {', '.join(sorted(list(classes)))}")
+                            if not any([imports, functions, classes]):
+                                context_parts.append("- The file is valid Python but contains no top-level imports, functions, or classes.")
+                            active_file_context = "\n".join(context_parts)
+                        except (SyntaxError, TypeError) as e:
+                            self.log("warning", f"Context Weaver: Could not parse {relative_path_str}, providing raw content. Error: {e}")
+                            context_parts.append("```\n" + file_content[:1500] + "\n... (truncated)\n```")
+                            active_file_context = "\n".join(context_parts)
+                    else:
+                        context_parts.append("```\n" + file_content[:1500] + "\n... (truncated)\n```")
+                        active_file_context = "\n".join(context_parts)
+        # --- END CONTEXT WEAVER ---
+
+
         vector_context = "Vector context (RAG) is currently disabled."
         if vector_context_service and vector_context_service.collection and vector_context_service.collection.count() > 0:
             retrieved_chunks = await vector_context_service.query(current_task_description, n_results=5)
@@ -73,6 +118,7 @@ class ConductorService:
             current_task=current_task_description,
             mission_log=mission_log_history,
             file_structure=file_structure,
+            active_file_context=active_file_context,
             available_tools=available_tools_json,
             relevant_code_snippets=vector_context,
             JSON_OUTPUT_RULE=JSON_OUTPUT_RULE.strip()
@@ -183,9 +229,6 @@ class ConductorService:
                     await self._post_chat_message(user_id, "Aura", "I'm stuck. Rethinking my approach.", is_error=True)
                     await self._execute_strategic_replan(user_id, current_task)
                 else:
-                    # --- THE FIX ---
-                    # Add a small delay to allow filesystem changes to propagate before the next loop.
-                    # This prevents the "File not found" errors in the log.
                     await asyncio.sleep(0.5)
 
         except Exception as e:

@@ -38,12 +38,15 @@ CODER_PROMPT = textwrap.dedent("""
         {file_structure}
         ```
 
-    4.  **AVAILABLE TOOLS:** This is the complete list of tools you are allowed to use. You MUST choose a tool from this list.
+    4.  **ACTIVE FILE CONTEXT:** If your task involves modifying a specific file, its key components (imports, functions, classes) are listed here. This is your primary source of truth for how that file is structured.
+        {active_file_context}
+
+    5.  **AVAILABLE TOOLS:** This is the complete list of tools you are allowed to use. You MUST choose a tool from this list.
         ```json
         {available_tools}
         ```
 
-    5.  **RELEVANT CODE SNIPPETS:** These are the most relevant existing code snippets from the project, based on the current task. Use these to understand existing code.
+    6.  **RELEVANT CODE SNIPPETS (RAG):** These are additional code snippets from the project, identified by the vector database as potentially relevant.
         ```
         {relevant_code_snippets}
         ```
