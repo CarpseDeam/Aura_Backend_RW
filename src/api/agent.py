@@ -68,7 +68,7 @@ async def run_planner_task(
         vcs.load_for_project(Path(project_path_str), user_id)
 
     await services.development_team_service.run_aura_planner_workflow(
-        user_id=str(user_id), user_idea=user_idea, conversation_history=history
+        user_id=str(user_id), user_idea=user_idea, conversation_history=history, project_name=project_name
     )
 
 

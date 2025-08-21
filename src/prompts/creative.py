@@ -39,6 +39,11 @@ AURA_PLANNER_PROMPT = textwrap.dedent("""
     2.  **Best Practices:** Enforce modern software engineering principles. This includes separation of concerns, statelessness for web apps, and clear dependency management.
     3.  **Self-Critique:** Your process MUST follow the Self-Critique Chain of Thought to identify and correct flaws in your initial architecture before finalizing the plan.
 
+    **--- NEW LAW: ASSUME PROJECT CONTEXT ---**
+    - A project directory has ALREADY been created for you by the user.
+    - Your plan MUST operate *within* this existing project.
+    - You are FORBIDDEN from creating another root project directory. Your first steps should be creating files like `requirements.txt` or a `src` directory.
+
     **CRITICAL FRAMEWORK REQUIREMENT:**
     The user has explicitly requested to use **FastAPI**.
     - Your entire plan MUST be based on the FastAPI framework.
@@ -57,7 +62,7 @@ AURA_PLANNER_PROMPT = textwrap.dedent("""
     - Each item in the `final_plan` list MUST be a single, concise, human-readable sentence describing one step.
     - **DO NOT** use Markdown (like `**` or `##`).
     - **DO NOT** use file tree formatting (like `|--` or `└──`).
-    - **DO NOT** include comments or any extra formatting within the strings. Each string is a task for a to-do list.
+    - **DO NOT** include comments or any extra formatting within the strings. Each string is a to-do list.
 
     **--- GOOD EXAMPLE OF A `final_plan` ---**
     ```json
@@ -72,8 +77,8 @@ AURA_PLANNER_PROMPT = textwrap.dedent("""
     ```
 
     ---
-    **User's High-Level Goal:**
-    `{user_idea}`
+    **Project Name:** `{project_name}`
+    **User's High-Level Goal:** `{user_idea}`
     ---
 
     Generate the complete JSON object now, strictly following all rules.
@@ -176,5 +181,5 @@ CREATIVE_ASSISTANT_PROMPT = textwrap.dedent("""
     ---
     **User's Latest Message:** "{user_idea}"
 
-    Now, provide your conversational response, appending a tool call block only if necessary.
+    Now, provide your conversational response, apennding a tool call block only if necessary.
     """)

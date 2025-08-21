@@ -170,9 +170,9 @@ class DevelopmentTeamService:
             return "I'm sorry, I seem to be having trouble connecting to my creative core right now."
         return response_str
 
-    async def run_aura_planner_workflow(self, user_id: str, user_idea: str, conversation_history: list):
+    async def run_aura_planner_workflow(self, user_id: str, user_idea: str, conversation_history: list, project_name: str):
         self.log("info", f"Aura planner workflow initiated for user {user_id}: '{user_idea[:50]}...'")
-        prompt = AURA_PLANNER_PROMPT.format(user_idea=user_idea)
+        prompt = AURA_PLANNER_PROMPT.format(user_idea=user_idea, project_name=project_name)
         messages = [{"role": "user", "content": prompt}]
         self.refresh_llm_assignments()
 
