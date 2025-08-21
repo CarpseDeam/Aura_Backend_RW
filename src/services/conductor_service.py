@@ -56,19 +56,23 @@ class ConductorService:
         if last_error:
             current_task_description += f"\n\n**PREVIOUS ATTEMPT FAILED!** Last error: `{last_error}`. You MUST try a different approach."
 
-        # --- CONTEXT WEAVER IMPLEMENTATION ---
-        active_file_context = "No specific file context was identified for this task. You might be creating a new file."
+        # --- THE UPGRADE: MULTI-FILE CONTEXT WEAVER ---
+        active_file_context_parts = []
         path_pattern = re.compile(r'([\w./-]+\.[\w]+)')
-        match = path_pattern.search(current_task_description)
+        # Find all unique file paths mentioned in the task description
+        found_paths = set(path_pattern.findall(current_task_description))
 
-        if match:
-            relative_path_str = match.group(1)
-            # Heuristic to avoid matching version numbers like 'v1.0'
-            if '/' in relative_path_str or relative_path_str.endswith(('.py', '.md', '.txt', '.json', '.toml')):
+        if found_paths:
+            for relative_path_str in sorted(list(found_paths)):
+                # Heuristic to avoid matching version numbers like 'v1.0'
+                if '/' not in relative_path_str and not relative_path_str.endswith(('.py', '.md', '.txt', '.json', '.toml')):
+                    continue
+
                 file_content = project_manager.read_file(relative_path_str)
+                context_header = f"**Context for `{relative_path_str}`:**"
                 if file_content:
                     self.log("info", f"Context Weaver: Found and read active file: {relative_path_str}")
-                    context_parts = [f"**Active File Context for `{relative_path_str}`:**\n"]
+                    context_parts = [context_header]
                     if relative_path_str.endswith(".py"):
                         try:
                             tree = ast.parse(file_content)
@@ -87,16 +91,20 @@ class ConductorService:
                             if functions: context_parts.append(f"- Functions: {', '.join(sorted(list(functions)))}")
                             if classes: context_parts.append(f"- Classes: {', '.join(sorted(list(classes)))}")
                             if not any([imports, functions, classes]):
-                                context_parts.append("- The file is valid Python but contains no top-level imports, functions, or classes.")
-                            active_file_context = "\n".join(context_parts)
+                                context_parts.append("- The file is valid Python but contains no top-level definitions.")
+                            active_file_context_parts.append("\n".join(context_parts))
                         except (SyntaxError, TypeError) as e:
                             self.log("warning", f"Context Weaver: Could not parse {relative_path_str}, providing raw content. Error: {e}")
-                            context_parts.append("```\n" + file_content[:1500] + "\n... (truncated)\n```")
-                            active_file_context = "\n".join(context_parts)
-                    else:
-                        context_parts.append("```\n" + file_content[:1500] + "\n... (truncated)\n```")
-                        active_file_context = "\n".join(context_parts)
-        # --- END CONTEXT WEAVER ---
+                            active_file_context_parts.append(f"{context_header}\n```\n{file_content[:1000]}...\n```")
+                    else: # For non-python files
+                        active_file_context_parts.append(f"{context_header}\n```\n{file_content[:1000]}...\n```")
+                else:
+                    active_file_context_parts.append(f"{context_header}\n- This file does not exist yet. You may need to create it.")
+
+        active_file_context = "\n\n".join(active_file_context_parts)
+        if not active_file_context:
+            active_file_context = "No specific file context was identified for this task. You might be creating a new file or directory."
+        # --- END CONTEXT WEAVER UPGRADE ---
 
 
         vector_context = "Vector context (RAG) is currently disabled."

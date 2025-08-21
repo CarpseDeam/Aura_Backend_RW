@@ -44,6 +44,14 @@ AURA_PLANNER_PROMPT = textwrap.dedent("""
     - Your plan MUST operate *within* this existing project.
     - You are FORBIDDEN from creating another root project directory. Your first steps should be creating files like `requirements.txt` or a `src` directory.
 
+    **--- THE UPGRADE: NEW LAW OF METHODICAL CREATION ---**
+    - You MUST separate the creation of a file from the implementation of its contents.
+    - First, create all necessary empty files and directories.
+    - Only after all files are created should you add tasks to implement the logic within them.
+    - This prevents race conditions where code tries to read a file that has not yet been created in the plan.
+    - GOOD: 1. "Create an empty file `src/db.py`." 2. "Implement the database logic in `src/db.py`."
+    - BAD: "Create a file `src/db.py` with the database logic."
+
     **CRITICAL FRAMEWORK REQUIREMENT:**
     The user has explicitly requested to use **FastAPI**.
     - Your entire plan MUST be based on the FastAPI framework.
@@ -54,7 +62,7 @@ AURA_PLANNER_PROMPT = textwrap.dedent("""
     **OUTPUT MANDATE: THE SELF-CRITIQUE CHAIN OF THOUGHT**
     Your response MUST be a single, valid JSON object with the following keys: `draft_plan`, `critique`, `final_plan`, `dependencies`.
     1.  `draft_plan`: Your initial, gut-reaction plan as a list of strings.
-    2.  `critique`: A ruthless self-critique of your `draft_plan`. Does it follow best practices? Does it adhere to the FastAPI requirement?
+    2.  `critique`: A ruthless self-critique of your `draft_plan`. Does it follow best practices? Does it adhere to the FastAPI requirement? Does it follow the Law of Methodical Creation?
     3.  `final_plan`: Your improved final plan that directly addresses your `critique`. This MUST be a list of simple, human-readable strings.
     4.  `dependencies`: A list of all `pip` installable packages required for the `final_plan`.
 
@@ -63,18 +71,6 @@ AURA_PLANNER_PROMPT = textwrap.dedent("""
     - **DO NOT** use Markdown (like `**` or `##`).
     - **DO NOT** use file tree formatting (like `|--` or `└──`).
     - **DO NOT** include comments or any extra formatting within the strings. Each string is a to-do list.
-
-    **--- GOOD EXAMPLE OF A `final_plan` ---**
-    ```json
-    "final_plan": [
-      "Create the main application directory named 'src'.",
-      "Create a file `src/main.py` to hold the FastAPI application instance.",
-      "Define a Pydantic model for the request body in `src/models.py`.",
-      "Implement the business logic for the primary endpoint in `src/services.py`.",
-      "Create the API router and define the endpoint in `src/router.py`.",
-      "Import and include the API router in `src/main.py`."
-    ]
-    ```
 
     ---
     **Project Name:** `{project_name}`
@@ -112,20 +108,6 @@ AURA_REPLANNER_PROMPT = textwrap.dedent("""
     3.  **REFERENCE THE ORIGINAL PLAN:** You may reuse, reorder, or discard any of the original tasks that came *after* the failed task.
     4.  **OUTPUT FORMAT:** Your response must be a single JSON object containing a "plan" key. The value is a list of human-readable strings representing the new tasks.
 
-    **EXAMPLE SCENARIO:**
-    - **Failed Task:** "Create file `app.py` with a function to call the GitHub API."
-    - **Error:** "401 Unauthorized"
-    - **Correct Re-Plan:**
-      ```json
-      {{
-        "plan": [
-          "Ask the user for a GitHub API token to resolve the '401 Unauthorized' error.",
-          "Create a `.env` file and store the user's API token in it.",
-          "Add 'python-dotenv' to `requirements.txt` to handle environment variables.",
-          "Modify `app.py` to load the API token from the `.env` file and use it in the API request."
-        ]
-      }}
-      ```
     ---
     Now, generate the new JSON plan to fix the error and get the mission back on track.
     """)
@@ -141,14 +123,6 @@ AURA_MISSION_SUMMARY_PROMPT = textwrap.dedent("""
 
     **YOUR MISSION:**
     Based on the completed task log, write a friendly, user-facing paragraph that summarizes the key accomplishments of the development session. Start the summary with "Mission accomplished!".
-
-    **EXAMPLE:**
-    **Input Tasks:**
-    - Create 'src' directory
-    - Create 'src/summarizer.py' with a function to fetch web content
-    - Create 'src/cli.py' to handle command-line arguments
-    **Output Summary:**
-    "Mission accomplished! I've successfully set up the project structure, creating a `src` directory to house our code. I then implemented the core logic in `summarizer.py` for fetching web content and built a command-line interface in `cli.py` to interact with the application. The project is now ready for the next phase."
     ---
     Now, generate the summary paragraph for the provided completed tasks.
     """)
