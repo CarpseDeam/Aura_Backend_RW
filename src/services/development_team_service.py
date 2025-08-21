@@ -1,5 +1,4 @@
 # src/services/development_team_service.py
-# src/services/development_team_service.py
 from __future__ import annotations
 
 import ast
@@ -14,12 +13,14 @@ from pathlib import Path
 
 from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
-from src.prompts.creative import AURA_PLANNER_PROMPT, AURA_REPLANNER_PROMPT, AURA_MISSION_SUMMARY_PROMPT, INTENT_DETECTION_PROMPT
+from src.prompts.creative import AURA_PLANNER_PROMPT, AURA_REPLANNER_PROMPT, AURA_MISSION_SUMMARY_PROMPT, \
+    INTENT_DETECTION_PROMPT
 from src.prompts.coder import CODER_PROMPT_STREAMING
 from src.prompts.master_rules import SENIOR_ARCHITECT_HEURISTIC_RULE, TYPE_HINTING_RULE, DOCSTRING_RULE, \
     CLEAN_CODE_RULE, MAESTRO_CODER_PHILOSOPHY_RULE, RAW_CODE_OUTPUT_RULE
 from src.prompts.companion import COMPANION_PROMPT
 from src.db import crud
+from src.services import mission_control  # <-- NEW IMPORT
 
 if TYPE_CHECKING:
     from src.core.managers import ServiceManager
@@ -57,7 +58,8 @@ class DevelopmentTeamService:
 
     async def _unified_llm_streamer(self, user_id: int, role: str, messages: List[Dict[str, Any]],
                                     is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None,
-                                    stream_to_user_socket_as: Optional[str] = None, file_path: Optional[str] = None) -> str:
+                                    stream_to_user_socket_as: Optional[str] = None,
+                                    file_path: Optional[str] = None) -> str:
         llm_client = self.service_manager.llm_client
         db = self.service_manager.db
         if not self.llm_server_url:
@@ -86,6 +88,17 @@ class DevelopmentTeamService:
                         return f"Error: LLM service failed with status {response.status}. Details: {error_detail}"
 
                     while not response.content.at_eof():
+                        # --- THE FIX: INTERRUPTIBLE STREAMING ---
+                        # On every single chunk, check if a stop has been requested.
+                        if not await mission_control.is_mission_running(str(user_id)):
+                            self.log("info",
+                                     f"Stop request received during code generation for user {user_id}. Halting stream.")
+                            # We can send a message to the user so they know it worked.
+                            await self._post_chat_message(str(user_id), "Conductor",
+                                                          "Code generation halted by user request.")
+                            return "Error: Code generation was cancelled by the user."
+                        # --- END FIX ---
+
                         line = await response.content.readline()
                         if not line:
                             continue
@@ -141,7 +154,8 @@ class DevelopmentTeamService:
         response_str = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
 
         if not response_str or response_str.startswith("Error:"):
-            await self.handle_error(user_id, "IntentDetector", response_str or "Intent detector returned an empty response.")
+            await self.handle_error(user_id, "IntentDetector",
+                                    response_str or "Intent detector returned an empty response.")
             return "CHAT"  # Default to chat on error
 
         try:
@@ -154,7 +168,7 @@ class DevelopmentTeamService:
             return intent
         except (ValueError, json.JSONDecodeError) as e:
             await self.handle_error(user_id, "IntentDetector", f"Failed to parse intent JSON: {e}. Raw: {response_str}")
-            return "CHAT" # Default to chat on parsing error
+            return "CHAT"  # Default to chat on parsing error
 
     async def run_companion_chat(self, user_id: str, user_prompt: str, conversation_history: list) -> str:
         self.log("info", f"Companion chat initiated for user {user_id}: '{user_prompt[:50]}...'")
@@ -170,7 +184,8 @@ class DevelopmentTeamService:
             return "I'm sorry, I seem to be having trouble connecting to my creative core right now."
         return response_str
 
-    async def run_aura_planner_workflow(self, user_id: str, user_idea: str, conversation_history: list, project_name: str):
+    async def run_aura_planner_workflow(self, user_id: str, user_idea: str, conversation_history: list,
+                                        project_name: str):
         self.log("info", f"Aura planner workflow initiated for user {user_id}: '{user_idea[:50]}...'")
         prompt = AURA_PLANNER_PROMPT.format(user_idea=user_idea, project_name=project_name)
         messages = [{"role": "user", "content": prompt}]
@@ -250,7 +265,12 @@ class DevelopmentTeamService:
         messages = [{"role": "user", "content": prompt}]
         self.refresh_llm_assignments()
 
-        full_code = await self._unified_llm_streamer(int(user_id), "coder", messages, stream_to_user_socket_as='code_stream_chunk', file_path=path)
+        full_code = await self._unified_llm_streamer(int(user_id), "coder", messages,
+                                                     stream_to_user_socket_as='code_stream_chunk', file_path=path)
+
+        # If the stream was cancelled, it will return an error string. Propagate it.
+        if full_code.startswith("Error:"):
+            return full_code
 
         # FIX: Improved regex to handle markdown code blocks more reliably.
         code_block_regex = re.compile(r'```(?:python\n)?(.*?)```', re.DOTALL)
