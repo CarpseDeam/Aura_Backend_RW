@@ -35,6 +35,11 @@ class ConductorService:
         self.user_id = service_manager.user_id
         logger.info("ConductorService initialized.")
 
+    def stop_mission(self):
+        """Signals the active mission to stop gracefully."""
+        logger.warning(f"Stop signal received for mission of user {self.user_id}.")
+        self.is_mission_active = False
+
     async def _get_tool_call_for_task(self, user_id: str, task: Dict[str, Any], last_error: Optional[str] = None) -> \
     Optional[Dict[str, Any]]:
         """
@@ -56,7 +61,6 @@ class ConductorService:
         if last_error:
             current_task_description += f"\n\n**PREVIOUS ATTEMPT FAILED!** Last error: `{last_error}`. You MUST try a different approach."
 
-        # --- THE FIX: Provide the full context bundle ---
         vector_context = "Vector context (RAG) is currently disabled."
         if vector_context_service and vector_context_service.collection and vector_context_service.collection.count() > 0:
             retrieved_chunks = await vector_context_service.query(current_task_description, n_results=5)
@@ -80,7 +84,6 @@ class ConductorService:
             relevant_code_snippets=vector_context,
             JSON_OUTPUT_RULE=JSON_OUTPUT_RULE.strip()
         )
-        # --- END FIX ---
 
         messages = [{"role": "user", "content": prompt}]
 
@@ -124,6 +127,7 @@ class ConductorService:
             await self.execute_mission(user_id)
         finally:
             self.is_mission_active = False
+            await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "idle"}, user_id)
             self.log("info", f"Conductor finished mission for user {user_id}.")
 
     async def execute_mission(self, user_id: str):
@@ -132,9 +136,11 @@ class ConductorService:
         try:
             await self._post_chat_message(user_id, "Conductor", "Mission dispatched. Beginning autonomous execution.")
             await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "thinking"}, user_id)
+
             while True:
                 if not self.is_mission_active:
-                    self.log("info", f"Mission for user {user_id} was stopped.")
+                    self.log("info", f"Mission for user {user_id} was stopped by request.")
+                    await self._post_chat_message(user_id, "Conductor", "Mission execution halted by user.")
                     break
 
                 pending_tasks = mission_log_service.get_tasks(done=False)
@@ -151,6 +157,8 @@ class ConductorService:
                 task_succeeded = False
 
                 while retry_count <= self.MAX_RETRIES_PER_TASK:
+                    if not self.is_mission_active:
+                        break
                     self.log("info", f"Executing task {current_task['id']}: {current_task['description']}")
                     tool_call = await self._get_tool_call_for_task(user_id, current_task,
                                                                    current_task.get('last_error'))
@@ -177,7 +185,7 @@ class ConductorService:
                         await self._post_chat_message(user_id, "Conductor",
                                                       f"Task failed, retrying. Error: {error_message}", is_error=True)
 
-                if not task_succeeded:
+                if not task_succeeded and self.is_mission_active:
                     self.log("error", f"Task {current_task['id']} failed after retries. Re-planning.")
                     await self._post_chat_message(user_id, "Aura", "I'm stuck. Rethinking my approach.", is_error=True)
                     await self._execute_strategic_replan(user_id, current_task)
