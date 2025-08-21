@@ -13,7 +13,7 @@ from pathlib import Path
 
 from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
-from src.prompts.creative import AURA_PLANNER_PROMPT, AURA_REPLANNER_PROMPT, AURA_MISSION_SUMMARY_PROMPT
+from src.prompts.creative import AURA_PLANNER_PROMPT, AURA_REPLANNER_PROMPT, AURA_MISSION_SUMMARY_PROMPT, INTENT_DETECTION_PROMPT
 from src.prompts.coder import CODER_PROMPT_STREAMING
 from src.prompts.master_rules import SENIOR_ARCHITECT_HEURISTIC_RULE, TYPE_HINTING_RULE, DOCSTRING_RULE, \
     CLEAN_CODE_RULE, MAESTRO_CODER_PHILOSOPHY_RULE, RAW_CODE_OUTPUT_RULE
@@ -122,6 +122,38 @@ class DevelopmentTeamService:
             if not match:
                 raise ValueError(f"No JSON object found in the response. Raw response: {response}")
             return json.loads(match.group(0))
+
+    async def determine_user_intent(self, user_id: str, user_prompt: str, conversation_history: list) -> str:
+        """
+        Uses an LLM to determine if the user wants to plan/build or just chat.
+        """
+        self.log("info", f"Determining intent for user {user_id}: '{user_prompt[:50]}...'")
+        history_str = "\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history])
+        prompt = INTENT_DETECTION_PROMPT.format(
+            conversation_history=history_str,
+            user_prompt=user_prompt
+        )
+        messages = [{"role": "user", "content": prompt}]
+        self.refresh_llm_assignments()
+
+        # Use the 'planner' role for this meta-task. It's lightweight.
+        response_str = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
+
+        if not response_str or response_str.startswith("Error:"):
+            await self.handle_error(user_id, "IntentDetector", response_str or "Intent detector returned an empty response.")
+            return "CHAT"  # Default to chat on error
+
+        try:
+            intent_data = self._parse_json_response(response_str)
+            intent = intent_data.get("intent", "CHAT").upper()
+            if intent not in ["PLAN", "CHAT"]:
+                self.log("warning", f"Intent detector returned invalid intent: {intent}. Defaulting to CHAT.")
+                return "CHAT"
+            self.log("info", f"Detected user intent: {intent}")
+            return intent
+        except (ValueError, json.JSONDecodeError) as e:
+            await self.handle_error(user_id, "IntentDetector", f"Failed to parse intent JSON: {e}. Raw: {response_str}")
+            return "CHAT" # Default to chat on parsing error
 
     async def run_companion_chat(self, user_id: str, user_prompt: str, conversation_history: list) -> str:
         self.log("info", f"Companion chat initiated for user {user_id}: '{user_prompt[:50]}...'")

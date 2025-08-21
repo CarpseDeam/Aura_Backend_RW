@@ -1,6 +1,6 @@
 # src/api/agent.py
 import logging
-from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, status, Query
+from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, status, Query, Response
 
 from typing import List, Dict, Any
 from pathlib import Path
@@ -117,71 +117,84 @@ router = APIRouter(
 )
 
 
-class GenerateRequest(BaseModel):
-    prompt: str
-    project_name: str
-    history: List[Dict[str, Any]]
-
-
 class DispatchRequest(BaseModel):
     project_name: str
 
 
-class ChatRequest(BaseModel):
+class PromptRequest(BaseModel):
     prompt: str
     history: List[Dict[str, Any]]
-    project_name: str
 
 
 class FileWriteRequest(BaseModel):
     path: str
     content: str
 
-
-@router.post("/chat")
-async def agent_chat(
-        request: ChatRequest,
+@router.post("/{project_name}/prompt", status_code=status.HTTP_202_ACCEPTED)
+async def handle_agent_prompt(
+        project_name: str,
+        request: PromptRequest,
+        background_tasks: BackgroundTasks,
+        response: Response,
         current_user: User = Depends(get_current_user),
         aura_services: ServiceManager = Depends(get_aura_services)
 ):
+    """
+    Handles a user prompt by first determining the intent (plan vs. chat)
+    and then routing to the appropriate service.
+    """
+    # 1. Load project context (needed for both chat and plan)
     project_manager: ProjectManager = aura_services.project_manager
-    mission_log_service: MissionLogService = aura_services.mission_log_service
-    project_path = project_manager.load_project(request.project_name)
+    project_path = project_manager.load_project(project_name)
     if not project_path:
-        raise HTTPException(status_code=404, detail=f"Project '{request.project_name}' not found.")
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found.")
 
     vcs: VectorContextService = aura_services.vector_context_service
     if vcs:
         vcs.load_for_project(Path(project_path), current_user.id)
-    mission_log_service.load_log_for_active_project()
+    aura_services.mission_log_service.load_log_for_active_project()
 
+    # 2. Determine intent
     dev_team: DevelopmentTeamService = aura_services.development_team_service
-    response_text = await dev_team.run_companion_chat(
+    intent = await dev_team.determine_user_intent(
         user_id=str(current_user.id),
         user_prompt=request.prompt,
         conversation_history=request.history
     )
-    return {"reply": response_text}
 
+    # 3. Route based on intent
+    if intent == "PLAN":
+        # Use existing background task runner for planning
+        background_tasks.add_task(
+            run_planner_task,
+            services=aura_services,
+            user_id=current_user.id,
+            project_name=project_name,
+            user_idea=request.prompt,
+            history=request.history
+        )
+        return {"message": "Aura has received your request and is formulating a plan."}
 
-@router.post("/generate", status_code=status.HTTP_202_ACCEPTED)
-async def generate_agent_plan(
-        request: GenerateRequest,
-        background_tasks: BackgroundTasks,
-        current_user: User = Depends(get_current_user),
-        aura_services: ServiceManager = Depends(get_aura_services)
-):
-    # No need to load project here; the background task will handle it.
-    background_tasks.add_task(
-        run_planner_task,
-        services=aura_services,
-        user_id=current_user.id,
-        project_name=request.project_name,
-        user_idea=request.prompt,
-        history=request.history
-    )
-    return {"message": "Aura has received your request and is formulating a plan."}
+    elif intent == "CHAT":
+        # Run chat in the foreground. It streams via websocket.
+        await dev_team.run_companion_chat(
+            user_id=str(current_user.id),
+            user_prompt=request.prompt,
+            conversation_history=request.history
+        )
+        response.status_code = status.HTTP_200_OK
+        return {"message": "Chat response is being streamed via WebSocket."}
 
+    else:  # Fallback/Error
+        logger.error(f"Intent detection failed for user {current_user.id}. Got unexpected intent: '{intent}'")
+        # Fallback to chat behavior as it's safer.
+        await dev_team.run_companion_chat(
+            user_id=str(current_user.id),
+            user_prompt=request.prompt,
+            conversation_history=request.history
+        )
+        response.status_code = status.HTTP_200_OK
+        return {"message": "Could not determine intent, defaulting to chat. Response is being streamed via WebSocket."}
 
 @router.post("/dispatch", status_code=status.HTTP_202_ACCEPTED)
 async def dispatch_agent_mission(
