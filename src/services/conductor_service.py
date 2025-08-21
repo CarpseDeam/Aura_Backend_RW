@@ -143,6 +143,10 @@ class ConductorService:
                     break
 
                 current_task = pending_tasks[0]
+                await websocket_manager.broadcast_to_user(
+                    {"type": "active_task_updated", "content": {"taskId": current_task['id']}},
+                    user_id
+                )
                 retry_count = 0
                 task_succeeded = False
 
