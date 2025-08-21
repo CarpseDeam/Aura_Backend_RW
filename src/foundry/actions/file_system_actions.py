@@ -149,6 +149,11 @@ def create_package_init(path: str) -> str:
         logger.exception(error_message)
         return error_message
 
+    except Exception as e:
+        error_message = f"An unexpected error occurred while initializing package at {path}: {e}"
+        logger.exception(error_message)
+        return error_message
+
 
 def delete_directory(path: str) -> str:
     """
@@ -264,3 +269,4 @@ def delete_file(path: str) -> str:
         error_message = f"An unexpected error occurred while deleting file {path}: {e}"
         logger.exception(error_message)
         return error_message
+

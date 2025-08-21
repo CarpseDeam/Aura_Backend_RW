@@ -1,58 +1,50 @@
 # foundry/actions/dependency_management_actions.py
 import logging
 from pathlib import Path
+from typing import List
 
 logger = logging.getLogger(__name__)
 
 
-def add_dependency_to_requirements(path: str = "requirements.txt", dependency: str = "") -> str:
+def add_dependency_to_requirements(path: str = "requirements.txt", dependencies: List[str] = None) -> str:
     """
-    Safely adds a dependency to a requirements.txt file.
-
-    It creates the file if it doesn't exist and ensures the dependency is not
-    already listed before appending it. It checks for the package name to avoid
-    duplicates even with different version specifiers.
-
-    Args:
-        path: The path to the requirements.txt file.
-        dependency: The dependency to add (e.g., 'flask' or 'pytest==7.4.0').
-
-    Returns:
-        A string indicating the result of the operation.
+    Safely adds one or more dependencies to a requirements.txt file.
     """
-    if not dependency:
-        return "Error: No dependency provided."
+    if not dependencies:
+        return "Error: No dependencies provided."
 
-    logger.info(f"Attempting to add dependency '{dependency}' to '{path}'")
+    logger.info(f"Attempting to add dependencies '{', '.join(dependencies)}' to '{path}'")
     req_file = Path(path)
-    package_name = dependency.split('==')[0].split('>')[0].split('<')[0].strip()
+    added_deps = []
+    existing_deps = []
 
     try:
-        # Create the file and its directories if it doesn't exist
         req_file.parent.mkdir(parents=True, exist_ok=True)
         if not req_file.exists():
             req_file.touch()
 
-        # Read existing dependencies
-        with open(req_file, 'r', encoding='utf-8') as f:
+        with open(req_file, 'r+', encoding='utf-8') as f:
             lines = f.readlines()
+            existing_packages = {line.split('==')[0].split('>')[0].split('<')[0].strip().lower() for line in lines}
 
-        existing_packages = {line.split('==')[0].split('>')[0].split('<')[0].strip() for line in lines}
+            for dep in dependencies:
+                package_name = dep.split('==')[0].split('>')[0].split('<')[0].strip().lower()
+                if package_name not in existing_packages:
+                    if lines and not lines[-1].endswith('\n'):
+                        f.write('\n')
+                    f.write(f"{dep}\n")
+                    added_deps.append(dep)
+                    existing_packages.add(package_name) # Add to set to handle duplicates in the input list
+                else:
+                    existing_deps.append(dep)
 
-        if package_name in existing_packages:
-            message = f"Dependency '{package_name}' already exists in '{path}'. No changes made."
-            logger.warning(message)
-            return message
+        message_parts = []
+        if added_deps:
+            message_parts.append(f"Successfully added: {', '.join(added_deps)}.")
+        if existing_deps:
+            message_parts.append(f"Already existed: {', '.join(existing_deps)}.")
 
-        # Append the new dependency
-        with open(req_file, 'a', encoding='utf-8') as f:
-            if lines and not lines[-1].endswith('\n'):
-                f.write('\n')
-            f.write(f"{dependency}\n")
-
-        success_message = f"Successfully added '{dependency}' to '{path}'."
-        logger.info(success_message)
-        return success_message
+        return " ".join(message_parts) if message_parts else "No changes made to requirements.txt."
 
     except Exception as e:
         error_message = f"An unexpected error occurred while managing dependencies: {e}"

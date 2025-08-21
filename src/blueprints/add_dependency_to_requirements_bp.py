@@ -4,21 +4,24 @@ from src.foundry.blueprints import Blueprint
 params = {
     "type": "object",
     "properties": {
-        "dependency": {
-            "type": "string",
-            "description": "The name of the Python package to add, e.g., 'flask' or 'pytest==7.4.0'.",
+        "dependencies": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "A list of Python packages to add, e.g., ['fastapi', 'uvicorn[standard]']",
         },
         "path": {
             "type": "string",
             "description": "The path to the requirements.txt file. Defaults to 'requirements.txt' in the project root.",
         }
     },
-    "required": ["dependency"],
+    "required": ["dependencies"],
 }
 
 blueprint = Blueprint(
     id="add_dependency_to_requirements",
-    description="Safely adds a dependency to a requirements.txt file. It creates the file if it doesn't exist and appends the dependency if it's not already present. This is the REQUIRED tool for managing dependencies.",
+    description="The REQUIRED and ONLY tool for managing dependencies. It safely adds one or more packages to a requirements.txt file. It creates the file if it doesn't exist and appends the dependencies if they are not already present.",
     parameters=params,
     action_function_name="add_dependency_to_requirements"
 )
