@@ -200,17 +200,6 @@ async def dispatch_agent_mission(
     return {"message": "Dispatch acknowledged. Aura is now executing the mission plan."}
 
 
-@router.post("/{project_name}/stop", status_code=status.HTTP_200_OK)
-async def stop_agent_mission(
-    project_name: str,
-    aura_services: ServiceManager = Depends(get_aura_services)
-):
-    """Stops the currently active mission for the user."""
-    conductor: ConductorService = aura_services.conductor_service
-    conductor.stop_mission()
-    return {"message": "Mission stop signal sent."}
-
-
 @router.get("/", response_model=List[str])
 async def list_user_projects(
         aura_services: ServiceManager = Depends(get_aura_services)
@@ -252,7 +241,9 @@ async def load_project_and_auto_index(
     message = f"Project '{project_name}' loaded successfully."
 
     if vcs:
+        # --- THE FIX ---
         vcs.load_for_project(project_path, current_user.id)
+        # --- END FIX ---
         if vcs.collection and vcs.collection.count() == 0:
             message += " Initial project scan for AI context has been started in the background."
             background_tasks.add_task(
