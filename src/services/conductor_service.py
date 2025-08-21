@@ -11,7 +11,6 @@ from src.prompts import CODER_PROMPT, JSON_OUTPUT_RULE
 if TYPE_CHECKING:
     from src.core.managers import ServiceManager
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -36,8 +35,8 @@ class ConductorService:
         self.user_id = service_manager.user_id
         logger.info("ConductorService initialized.")
 
-
-    async def _get_tool_call_for_task(self, user_id: str, task: Dict[str, Any], last_error: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    async def _get_tool_call_for_task(self, user_id: str, task: Dict[str, Any], last_error: Optional[str] = None) -> \
+    Optional[Dict[str, Any]]:
         """
         The "brain" of the Conductor. It uses the LLM to translate a task
         into a single, executable tool call.
@@ -46,6 +45,7 @@ class ConductorService:
         foundry_manager = self.service_manager.foundry_manager
         development_team_service = self.service_manager.development_team_service
         project_manager = self.service_manager.project_manager
+        vector_context_service = self.service_manager.vector_context_service
 
         current_task_description = task['description']
         log_tasks = mission_log_service.get_tasks()
@@ -56,20 +56,36 @@ class ConductorService:
         if last_error:
             current_task_description += f"\n\n**PREVIOUS ATTEMPT FAILED!** Last error: `{last_error}`. You MUST try a different approach."
 
+        # --- THE FIX: Provide the full context bundle ---
         vector_context = "Vector context (RAG) is currently disabled."
-        file_structure = "\n".join(sorted(project_manager.get_project_files().keys())) or "The project is currently empty."
-        available_tools = foundry_manager.get_llm_tool_definitions()
+        if vector_context_service and vector_context_service.collection and vector_context_service.collection.count() > 0:
+            retrieved_chunks = await vector_context_service.query(current_task_description, n_results=5)
+            if retrieved_chunks:
+                context_parts = ["Here are the most relevant code snippets based on the task:\n"]
+                for chunk in retrieved_chunks:
+                    metadata = chunk['metadata']
+                    source_info = f"From file: {metadata.get('file_path', 'N/A')} ({metadata.get('node_type', 'N/A')}: {metadata.get('node_name', 'N/A')})"
+                    context_parts.append(f"```python\n# {source_info}\n{chunk['document']}\n```")
+                vector_context = "\n\n".join(context_parts)
+
+        file_structure = "\n".join(
+            sorted(project_manager.get_project_files().keys())) or "The project is currently empty."
+        available_tools_json = json.dumps(foundry_manager.get_llm_tool_definitions(), indent=2)
 
         prompt = CODER_PROMPT.format(
             current_task=current_task_description,
             mission_log=mission_log_history,
             file_structure=file_structure,
+            available_tools=available_tools_json,
             relevant_code_snippets=vector_context,
             JSON_OUTPUT_RULE=JSON_OUTPUT_RULE.strip()
         )
+        # --- END FIX ---
+
         messages = [{"role": "user", "content": prompt}]
 
-        response_str = await development_team_service._unified_llm_streamer(int(user_id), "coder", messages, is_json=True, tools=available_tools)
+        response_str = await development_team_service._unified_llm_streamer(int(user_id), "coder", messages,
+                                                                            is_json=True)
 
         if response_str.startswith("Error:"):
             self.log("error", f"Conductor's LLM call failed. Details: {response_str}")
@@ -132,7 +148,8 @@ class ConductorService:
 
                 while retry_count <= self.MAX_RETRIES_PER_TASK:
                     self.log("info", f"Executing task {current_task['id']}: {current_task['description']}")
-                    tool_call = await self._get_tool_call_for_task(user_id, current_task, current_task.get('last_error'))
+                    tool_call = await self._get_tool_call_for_task(user_id, current_task,
+                                                                   current_task.get('last_error'))
 
                     if not tool_call:
                         error_msg = f"Could not determine a tool call for task: '{current_task['description']}'"
@@ -145,14 +162,16 @@ class ConductorService:
 
                     if not result_is_error:
                         await mission_log_service.mark_task_as_done(user_id, current_task['id'])
-                        await self._post_chat_message(user_id, "Conductor", f"Task completed: {current_task['description']}")
+                        await self._post_chat_message(user_id, "Conductor",
+                                                      f"Task completed: {current_task['description']}")
                         task_succeeded = True
                         break
                     else:
                         current_task['last_error'] = error_message
                         retry_count += 1
                         self.log("warning", f"Task {current_task['id']} failed. Error: {error_message}.")
-                        await self._post_chat_message(user_id, "Conductor", f"Task failed, retrying. Error: {error_message}", is_error=True)
+                        await self._post_chat_message(user_id, "Conductor",
+                                                      f"Task failed, retrying. Error: {error_message}", is_error=True)
 
                 if not task_succeeded:
                     self.log("error", f"Task {current_task['id']} failed after retries. Re-planning.")
@@ -169,10 +188,12 @@ class ConductorService:
     def _is_result_an_error(self, result: any) -> (bool, Optional[str]):
         if result is None:
             return True, "Tool returned an empty result, which indicates a potential failure."
-        if isinstance(result, str) and (result.strip().lower().startswith("error") or "failed" in result.strip().lower()):
+        if isinstance(result, str) and (
+                result.strip().lower().startswith("error") or "failed" in result.strip().lower()):
             return True, result
         if isinstance(result, dict) and result.get('status', 'success').lower() in ["failure", "error"]:
-            return True, result.get('summary') or result.get('full_output') or "Tool indicated failure without a detailed message."
+            return True, result.get('summary') or result.get(
+                'full_output') or "Tool indicated failure without a detailed message."
         return False, None
 
     async def _execute_strategic_replan(self, user_id: str, failed_task: Dict):

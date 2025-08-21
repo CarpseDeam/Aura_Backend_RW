@@ -11,10 +11,9 @@ CODER_PROMPT = textwrap.dedent("""
     **EXAMPLE OF A PERFECT RESPONSE:**
     ```json
     {{
-      "tool_name": "write_file",
+      "tool_name": "add_dependency_to_requirements",
       "arguments": {{
-        "path": "src/api/auth.py",
-        "task_description": "Create a new FastAPI route in 'src/api/auth.py' to handle user registration. The route should accept an email and password, hash the password using bcrypt, and store the new user in the database. Ensure proper error handling for existing users."
+        "dependencies": ["fastapi", "uvicorn[standard]"]
       }}
     }}
     ```
@@ -34,7 +33,12 @@ CODER_PROMPT = textwrap.dedent("""
         {file_structure}
         ```
 
-    4.  **RELEVANT CODE SNIPPETS:** These are the most relevant existing code snippets from the project, based on the current task. Use these to understand existing code.
+    4.  **AVAILABLE TOOLS:** This is the complete list of tools you are allowed to use. You MUST choose a tool from this list.
+        ```json
+        {available_tools}
+        ```
+
+    5.  **RELEVANT CODE SNIPPETS:** These are the most relevant existing code snippets from the project, based on the current task. Use these to understand existing code.
         ```
         {relevant_code_snippets}
         ```
@@ -68,8 +72,7 @@ CODER_PROMPT_STREAMING = textwrap.dedent("""
     **LAW #2: THE PLAN IS ABSOLUTE.**
     - You do not have the authority to change the plan. You must work within its constraints.
     - **Relevant Plan Context:** This is the portion of the architect's plan that is most relevant to your current task.
-      ```
-      {relevant_plan_context}
+      ```      {relevant_plan_context}
       ```
     - **Project File Manifest:** This is the complete list of all files that exist or will exist in the project. Use this for context on imports.
       ```
