@@ -2,6 +2,7 @@
 # src/services/development_team_service.py
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import re
@@ -251,9 +252,25 @@ class DevelopmentTeamService:
 
         full_code = await self._unified_llm_streamer(int(user_id), "coder", messages, stream_to_user_socket_as='code_stream_chunk', file_path=path)
 
-        code_block_regex = re.compile(r'''(?:python)?\n(.*?)\n''', re.DOTALL)
+        # FIX: Improved regex to handle markdown code blocks more reliably.
+        code_block_regex = re.compile(r'```(?:python\n)?(.*?)```', re.DOTALL)
         match = code_block_regex.search(full_code)
-        return match.group(1).strip() if match else full_code.strip()
+        clean_code = match.group(1).strip() if match else full_code.strip()
+
+        if not clean_code:
+            error_message = f"Error: The AI failed to generate any code for '{path}'. The response was empty."
+            self.log("error", error_message)
+            return error_message
+
+        # FIX: Add a validation step to ensure the generated code is syntactically correct.
+        try:
+            ast.parse(clean_code)
+            self.log("success", f"Generated code for '{path}' is syntactically valid.")
+            return clean_code
+        except SyntaxError as e:
+            error_message = f"Error: The AI-generated code for '{path}' has a syntax error. Please fix it. Details: {e}\n\nProblematic Code:\n---\n{clean_code}\n---"
+            self.log("error", error_message)
+            return error_message
 
     async def run_strategic_replan(self, user_id: str, original_goal: str, failed_task: Dict, mission_log: List[Dict]):
         mission_log_service = self.service_manager.mission_log_service

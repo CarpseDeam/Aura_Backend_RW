@@ -8,6 +8,11 @@ CODER_PROMPT = textwrap.dedent("""
 
     {JSON_OUTPUT_RULE}
 
+    **IMPORTANT RULE FOR FILE PATHS:**
+    • When providing file paths as arguments to tools (e.g., for write_file, read_file, lint_file, etc.), you MUST ensure the path is relative to the project root and DO NOT include the project name itself.
+    • For example, if the project is named my_project and you want to refer to my_project/src/main.py, you MUST provide the path as src/main.py.
+    • Paths should always use forward slashes (/) as separators.
+
     **EXAMPLE OF A PERFECT RESPONSE:**
     ```json
     {{
