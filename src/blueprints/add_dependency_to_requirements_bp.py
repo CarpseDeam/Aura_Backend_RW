@@ -21,7 +21,7 @@ params = {
 
 blueprint = Blueprint(
     id="add_dependency_to_requirements",
-    description="The REQUIRED and ONLY tool for managing dependencies. It safely adds one or more packages to a requirements.txt file. It creates the file if it doesn't exist and appends the dependencies if they are not already present.",
+    description="The one and only tool for managing dependencies. Use this to add packages to 'requirements.txt'. This tool automatically creates the file if it doesn't exist, so DO NOT use 'write_file' or 'create_file' to create 'requirements.txt' separately.",
     parameters=params,
     action_function_name="add_dependency_to_requirements"
 )
