@@ -20,7 +20,8 @@ from src.prompts.master_rules import SENIOR_ARCHITECT_HEURISTIC_RULE, TYPE_HINTI
     CLEAN_CODE_RULE, MAESTRO_CODER_PHILOSOPHY_RULE, RAW_CODE_OUTPUT_RULE
 from src.prompts.companion import COMPANION_PROMPT
 from src.db import crud
-from src.services import mission_control  # <-- NEW IMPORT
+from src.services import mission_control
+from src.prompts.polish import METICULOUS_LINTER_PROMPT
 
 if TYPE_CHECKING:
     from src.core.managers import ServiceManager
@@ -88,16 +89,12 @@ class DevelopmentTeamService:
                         return f"Error: LLM service failed with status {response.status}. Details: {error_detail}"
 
                     while not response.content.at_eof():
-                        # --- THE FIX: INTERRUPTIBLE STREAMING ---
-                        # On every single chunk, check if a stop has been requested.
                         if not await mission_control.is_mission_running(str(user_id)):
                             self.log("info",
                                      f"Stop request received during code generation for user {user_id}. Halting stream.")
-                            # We can send a message to the user so they know it worked.
                             await self._post_chat_message(str(user_id), "Conductor",
                                                           "Code generation halted by user request.")
                             return "Error: Code generation was cancelled by the user."
-                        # --- END FIX ---
 
                         line = await response.content.readline()
                         if not line:
@@ -138,9 +135,6 @@ class DevelopmentTeamService:
             return json.loads(match.group(0))
 
     async def determine_user_intent(self, user_id: str, user_prompt: str, conversation_history: list) -> str:
-        """
-        Uses an LLM to determine if the user wants to plan/build or just chat.
-        """
         self.log("info", f"Determining intent for user {user_id}: '{user_prompt[:50]}...'")
         history_str = "\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history])
         prompt = INTENT_DETECTION_PROMPT.format(
@@ -149,15 +143,11 @@ class DevelopmentTeamService:
         )
         messages = [{"role": "user", "content": prompt}]
         self.refresh_llm_assignments()
-
-        # Use the 'planner' role for this meta-task. It's lightweight.
         response_str = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
-
         if not response_str or response_str.startswith("Error:"):
             await self.handle_error(user_id, "IntentDetector",
                                     response_str or "Intent detector returned an empty response.")
-            return "CHAT"  # Default to chat on error
-
+            return "CHAT"
         try:
             intent_data = self._parse_json_response(response_str)
             intent = intent_data.get("intent", "CHAT").upper()
@@ -168,7 +158,7 @@ class DevelopmentTeamService:
             return intent
         except (ValueError, json.JSONDecodeError) as e:
             await self.handle_error(user_id, "IntentDetector", f"Failed to parse intent JSON: {e}. Raw: {response_str}")
-            return "CHAT"  # Default to chat on parsing error
+            return "CHAT"
 
     async def run_companion_chat(self, user_id: str, user_prompt: str, conversation_history: list) -> str:
         self.log("info", f"Companion chat initiated for user {user_id}: '{user_prompt[:50]}...'")
@@ -176,9 +166,7 @@ class DevelopmentTeamService:
         prompt = COMPANION_PROMPT.format(conversation_history=history_str, user_prompt=user_prompt)
         messages = [{"role": "user", "content": prompt}]
         self.refresh_llm_assignments()
-
         response_str = await self._unified_llm_streamer(int(user_id), "chat", messages)
-
         if response_str.startswith("Error:"):
             await self.handle_error(user_id, "Companion", response_str)
             return "I'm sorry, I seem to be having trouble connecting to my creative core right now."
@@ -190,31 +178,24 @@ class DevelopmentTeamService:
         prompt = AURA_PLANNER_PROMPT.format(user_idea=user_idea, project_name=project_name)
         messages = [{"role": "user", "content": prompt}]
         self.refresh_llm_assignments()
-
         response_str = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
-
         if not response_str or response_str.strip().startswith("Error:"):
-            error_content = response_str or "The Architect AI returned an empty or invalid response. This can happen if the model is overloaded or if it responded with a format that could not be understood (e.g., a tool call instead of a JSON plan)."
+            error_content = response_str or "The Architect AI returned an empty or invalid response."
             await self.handle_error(user_id, "Aura", error_content)
             return
-
         try:
             plan_data = self._parse_json_response(response_str)
-            critique = plan_data.get("critique", "No critique provided.")
             dependencies = plan_data.get("dependencies", [])
-            self.log("info", f"Aura's Self-Critique: {critique}")
             final_plan = plan_data.get("final_plan", [])
             if not final_plan or not isinstance(final_plan, list):
-                raise ValueError("Aura's final_plan was empty or malformed after self-critique.")
-
+                raise ValueError("Aura's final_plan was empty or malformed.")
             if dependencies:
                 deps_str = ", ".join(dependencies)
                 final_plan.insert(0, f"Add the following dependencies to requirements.txt: {deps_str}")
-
             mission_log_service = self.service_manager.mission_log_service
             await mission_log_service.set_initial_plan(user_id, final_plan, user_idea)
             await self._post_chat_message(user_id, "Aura",
-                                          "I've analyzed the request and created a production-ready plan. Review it in the 'Agent TODO' list and click 'Dispatch Aura' to begin.")
+                                          "I've created a plan. Review it in 'Agent TODO' and click 'Dispatch Aura' to begin.")
         except (ValueError, json.JSONDecodeError) as e:
             await self.handle_error(user_id, "Aura", f"Failed to create a valid plan: {e}.")
             self.log("error", f"Aura planner failure for user {user_id}. Raw response: {response_str}")
@@ -244,16 +225,12 @@ class DevelopmentTeamService:
         project_manager = self.service_manager.project_manager
         mission_log_service = self.service_manager.mission_log_service
         self.log("info", f"Generating code for '{path}'...")
-
         schema_content = project_manager.read_file('src/schemas.py') or "# src/schemas.py not found or is empty."
         models_content = project_manager.read_file('src/models.py') or "# src/models.py not found or is empty."
         schema_and_models_context = f"--- Contents of src/schemas.py ---\n{schema_content}\n\n--- Contents of src/models.py ---\n{models_content}"
-
-        file_tree = "\n".join(
-            sorted(project_manager.get_project_files().keys())) or "The project is currently empty."
+        file_tree = "\n".join(sorted(project_manager.get_project_files().keys())) or "The project is currently empty."
         full_plan = mission_log_service.get_tasks()
         relevant_plan_context = self._get_relevant_plan_context(current_task_id, full_plan)
-
         prompt = CODER_PROMPT_STREAMING.format(
             path=path, task_description=task_description, file_tree=file_tree, user_idea=user_idea,
             relevant_plan_context=relevant_plan_context,
@@ -261,36 +238,23 @@ class DevelopmentTeamService:
             MAESTRO_CODER_PHILOSOPHY_RULE=MAESTRO_CODER_PHILOSOPHY_RULE.strip(),
             TYPE_HINTING_RULE=TYPE_HINTING_RULE.strip(), DOCSTRING_RULE=DOCSTRING_RULE.strip(),
             CLEAN_CODE_RULE=CLEAN_CODE_RULE.strip(), RAW_CODE_OUTPUT_RULE=RAW_CODE_OUTPUT_RULE.strip())
-
         messages = [{"role": "user", "content": prompt}]
         self.refresh_llm_assignments()
-
         full_code = await self._unified_llm_streamer(int(user_id), "coder", messages,
                                                      stream_to_user_socket_as='code_stream_chunk', file_path=path)
-
-        # If the stream was cancelled, it will return an error string. Propagate it.
         if full_code.startswith("Error:"):
             return full_code
-
-        # FIX: Improved regex to handle markdown code blocks more reliably.
         code_block_regex = re.compile(r'```(?:python\n)?(.*?)```', re.DOTALL)
         match = code_block_regex.search(full_code)
         clean_code = match.group(1).strip() if match else full_code.strip()
-
         if not clean_code:
-            error_message = f"Error: The AI failed to generate any code for '{path}'. The response was empty."
-            self.log("error", error_message)
-            return error_message
-
-        # FIX: Add a validation step to ensure the generated code is syntactically correct.
+            return f"Error: The AI failed to generate any code for '{path}'. The response was empty."
         try:
             ast.parse(clean_code)
             self.log("success", f"Generated code for '{path}' is syntactically valid.")
             return clean_code
         except SyntaxError as e:
-            error_message = f"Error: The AI-generated code for '{path}' has a syntax error. Please fix it. Details: {e}\n\nProblematic Code:\n---\n{clean_code}\n---"
-            self.log("error", error_message)
-            return error_message
+            return f"Error: AI-generated code for '{path}' has a syntax error: {e}"
 
     async def run_strategic_replan(self, user_id: str, original_goal: str, failed_task: Dict, mission_log: List[Dict]):
         mission_log_service = self.service_manager.mission_log_service
@@ -304,13 +268,10 @@ class DevelopmentTeamService:
             failed_task=failed_task_str, error_message=error_message)
         messages = [{"role": "user", "content": prompt}]
         self.refresh_llm_assignments()
-
         response_str = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
-
         if not response_str or response_str.startswith("Error:"):
             await self.handle_error(user_id, "Aura", response_str or "Re-planner returned an empty response.")
             return
-
         try:
             new_plan_data = self._parse_json_response(response_str)
             new_plan_steps = new_plan_data.get("plan", [])
@@ -322,6 +283,48 @@ class DevelopmentTeamService:
         except (ValueError, json.JSONDecodeError) as e:
             await self.handle_error(user_id, "Aura", f"I failed to create a valid recovery plan: {e}")
             self.log("error", f"Aura re-planner failure for user {user_id}. Raw response: {response_str}")
+
+    async def run_final_polish_linter(self, user_id: str, user_idea: str, file_tree: str, git_diff: str) -> List[
+        Dict[str, str]]:
+        """
+        Invokes the Meticulous Linter AI to find and suggest fixes for new code.
+        """
+        self.log("info", "Running Final Polish check on newly generated code...")
+        await self._post_chat_message(user_id, "Conductor",
+                                      "Code generation complete. Performing final quality review...")
+
+        prompt = METICULOUS_LINTER_PROMPT.format(
+            user_idea=user_idea,
+            file_tree=file_tree,
+            git_diff=git_diff
+        )
+        messages = [{"role": "user", "content": prompt}]
+        self.refresh_llm_assignments()
+
+        response_str = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
+
+        if not response_str or response_str.startswith("Error:"):
+            await self.handle_error(user_id, "FinalPolish", response_str or "The Linter AI returned an empty response.")
+            return []
+
+        try:
+            fix_data = self._parse_json_response(response_str)
+            fixes = fix_data.get("fixes", [])
+            if not isinstance(fixes, list):
+                raise ValueError("The 'fixes' key must be a list.")
+
+            if fixes:
+                self.log("success", f"Final Polish found {len(fixes)} issue(s) to correct.")
+                await self._post_chat_message(user_id, "Conductor",
+                                              f"Found {len(fixes)} small bug(s). Applying automated patches...")
+            else:
+                self.log("success", "Final Polish found no issues. The code is clean!")
+                await self._post_chat_message(user_id, "Conductor", "Final quality review passed with no issues.")
+
+            return fixes
+        except (ValueError, json.JSONDecodeError) as e:
+            await self.handle_error(user_id, "FinalPolish", f"Failed to parse Linter AI JSON: {e}. Raw: {response_str}")
+            return []
 
     async def generate_mission_summary(self, user_id: str, completed_tasks: List[Dict]) -> str:
         task_descriptions = "\n".join([f"- {task['description']}" for task in completed_tasks if task['done']])
