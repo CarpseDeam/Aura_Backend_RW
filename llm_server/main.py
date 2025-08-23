@@ -1,5 +1,4 @@
 # llm_server/main.py
-# llm_server/main.py
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -21,6 +20,7 @@ PROVIDER_MAP: Dict[str, Type[BaseProvider]] = {
     "deepseek": DeepseekProvider,
 }
 
+
 class LLMRequest(BaseModel):
     provider_name: str
     model_name: str
@@ -29,10 +29,11 @@ class LLMRequest(BaseModel):
     is_json: bool = False
     tools: Optional[List[Dict[str, Any]]] = None
 
+
 async def stream_llm_response(
-    provider: BaseProvider,
-    request: LLMRequest,
-    provider_specific_tools: Optional[List[Dict[str, Any]]]
+        provider: BaseProvider,
+        request: LLMRequest,
+        provider_specific_tools: Optional[List[Dict[str, Any]]]
 ) -> AsyncGenerator[str, None]:
     """
     An async generator that yields structured JSON chunks from the LLM provider.
@@ -43,33 +44,52 @@ async def stream_llm_response(
         json_accumulator = ""
         brace_counter = 0
         in_json_block = False
+        phases_yielded = set()
 
         async for chunk in provider.get_chat_response_stream(
-            model_name=request.model_name,
-            messages=request.messages,
-            temperature=request.temperature,
-            is_json=request.is_json,
-            tools=provider_specific_tools
+                model_name=request.model_name,
+                messages=request.messages,
+                temperature=request.temperature,
+                is_json=request.is_json,
+                tools=provider_specific_tools
         ):
             full_response_content += chunk
 
             if request.is_json:
                 json_accumulator += chunk
-                if '"draft_plan":' in json_accumulator and brace_counter == 1:
-                    yield json.dumps({"type": "phase", "content": "Drafting initial plan..."}) + "\n"
-                if '"critique":' in json_accumulator and brace_counter == 1:
-                    yield json.dumps({"type": "phase", "content": "Critiquing the draft for architectural flaws..."}) + "\n"
-                if '"final_plan":' in json_accumulator and brace_counter == 1:
-                    yield json.dumps({"type": "phase", "content": "Refining the final plan based on the critique..."}) + "\n"
 
-                brace_counter += chunk.count('{')
-                brace_counter -= chunk.count('}')
+                # Use brace counting to ensure we are at the top level of the JSON object
+                # before yielding a phase. This prevents firing on nested keys.
+                # A simple check for brace_counter == 1 is effective here.
+                open_braces = chunk.count('{')
+                close_braces = chunk.count('}')
+
+                if not in_json_block and '{' in chunk:
+                    in_json_block = True
+
+                if in_json_block:
+                    brace_counter += open_braces
+                    brace_counter -= close_braces
+
+                    if brace_counter == 1:
+                        if '"draft_plan":' in json_accumulator and 'draft_plan' not in phases_yielded:
+                            yield json.dumps({"type": "phase", "content": "Drafting initial plan..."}) + "\n"
+                            phases_yielded.add('draft_plan')
+                        if '"critique":' in json_accumulator and 'critique' not in phases_yielded:
+                            yield json.dumps(
+                                {"type": "phase", "content": "Critiquing the draft for architectural flaws..."}) + "\n"
+                            phases_yielded.add('critique')
+                        if '"final_plan":' in json_accumulator and 'final_plan' not in phases_yielded:
+                            yield json.dumps(
+                                {"type": "phase", "content": "Refining the final plan based on the critique..."}) + "\n"
+                            phases_yielded.add('final_plan')
+
+                if brace_counter <= 0 and in_json_block:
+                    in_json_block = False
+
             else:
-                for char in chunk:
-                    yield json.dumps({"type": "chunk", "content": char}) + "\n"
+                yield json.dumps({"type": "chunk", "content": chunk}) + "\n"
 
-        # --- THE FIX ---
-        # If after the entire stream, we have no content, it's an error.
         if not full_response_content.strip():
             error_message = "The AI model returned an empty response. This may be due to a content filter or an internal model error. Please try again."
             yield json.dumps({"type": "system_log", "content": error_message}) + "\n"
@@ -86,8 +106,8 @@ async def stream_llm_response(
 
 @app.post("/invoke")
 async def invoke_llm(
-    request: LLMRequest,
-    x_provider_api_key: str = Header(...)
+        request: LLMRequest,
+        x_provider_api_key: str = Header(...)
 ):
     """
     Receives a request and invokes the specified LLM provider, streaming the response.
@@ -105,7 +125,7 @@ async def invoke_llm(
     try:
         provider = provider_class(x_provider_api_key)
     except ValueError as e:
-         raise HTTPException(status_code=500, detail=f"Failed to initialize provider: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to initialize provider: {e}")
 
     provider_specific_tools = None
     if request.tools:
@@ -115,6 +135,7 @@ async def invoke_llm(
         stream_llm_response(provider, request, provider_specific_tools),
         media_type="application/x-ndjson"
     )
+
 
 @app.get("/health")
 def health_check():
