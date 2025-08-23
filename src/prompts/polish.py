@@ -12,7 +12,7 @@ METICULOUS_LINTER_PROMPT = textwrap.dedent("""
         - **Import Errors:** Using a module that hasn't been imported, or importing a name that doesn't exist.
         - **Argument Mismatches:** Calling a function with the wrong number or names of arguments.
         - **Attribute Errors:** Accessing an attribute that doesn't exist on an object (e.g., `contact.model_dump()` when it should be `contact.dict()`).
-    4.  **OUTPUT FORMAT:** Your response MUST be a single, raw JSON object containing one key, "fixes". The value is a list of patch objects. If no fixes are needed, return an empty list: `{"fixes": []}`.
+    4.  **OUTPUT FORMAT:** Your response MUST be a single, raw JSON object containing one key, "fixes". The value is a list of patch objects. If no fixes are needed, return an empty list: `{{"fixes": []}}`.
         - Each patch object MUST have the keys: "file_path", "original_code_snippet", "fixed_code_snippet", and "reason".
         - The code snippets MUST be exact, single-line string matches from the diff.
 
