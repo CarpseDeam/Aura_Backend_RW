@@ -87,20 +87,26 @@ CODER_PROMPT_STREAMING = textwrap.dedent("""
       {file_tree}
       ```
 
-    **LAW #3: DO NOT INVENT IMPORTS.**
+    **LAW #3: THE LAW OF DIRECT IMPORTS.**
+    - This law is critical to preventing `NameError` bugs.
+    - If a file uses a direct import, such as `from .database import read_contacts`, you **MUST** call the function directly (e.g., `read_contacts()`).
+    - You are **STRICTLY FORBIDDEN** from using a module prefix for directly imported functions (e.g., `database.read_contacts()`). This is a fatal error.
+    - Only use a module prefix if the import statement is `import .database`.
+
+    **LAW #4: DO NOT INVENT IMPORTS.**
     - You can **ONLY** import from three sources:
         1. Standard Python libraries (e.g., `os`, `sys`, `json`).
         2. External packages explicitly listed as dependencies in the project plan.
         3. Other project files that are present in the **Project File Manifest**.
     - If a file or class is NOT in your provided context, it **DOES NOT EXIST**. You are forbidden from importing it.
 
-    **LAW #4: ADHERE TO MAESTRO CODING STANDARDS.**
+    **LAW #5: ADHERE TO MAESTRO CODING STANDARDS.**
     - {MAESTRO_CODER_PHILOSOPHY_RULE}
     - {TYPE_HINTING_RULE}
     - {DOCSTRING_RULE}
     - {CLEAN_CODE_RULE}
 
-    **LAW #5: FULL & COMPLETE IMPLEMENTATION.**
+    **LAW #6: FULL & COMPLETE IMPLEMENTATION.**
     - Your code for the assigned file must be complete, functional, and production-ready.
     - Do not write placeholder or stub code.
 
