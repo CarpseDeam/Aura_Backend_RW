@@ -1,4 +1,4 @@
-# src/services/file_system_actions.py
+# src/foundry/actions/file_system_actions.py
 """
 Contains actions related to direct file system manipulation.
 All functions in this module assume that any relative paths have been
@@ -11,14 +11,15 @@ from pathlib import Path
 from src.event_bus import EventBus
 from src.events import StreamCodeChunk
 from src.core.managers import ProjectManager
+from src.services import VectorContextService
 
 logger = logging.getLogger(__name__)
 
 
-async def write_file(path: str, content: str) -> str:
+async def write_file(path: str, content: str, vector_context_service: VectorContextService) -> str:
     """
     Writes content to a specified file, creating directories if necessary.
-    This version first streams the content to the GUI before writing.
+    Crucially, it now synchronously re-indexes the file for RAG if it's a Python file.
     """
     try:
         logger.info(f"Attempting to write to file: {path}")
@@ -27,6 +28,11 @@ async def write_file(path: str, content: str) -> str:
 
         path_obj.parent.mkdir(parents=True, exist_ok=True)
         bytes_written = path_obj.write_text(content, encoding='utf-8')
+
+        if vector_context_service and path_obj.suffix == '.py':
+            await vector_context_service.reindex_file(path_obj, content)
+            logger.info(f"Synchronously re-indexed '{path}' for RAG context.")
+
         success_message = f"Successfully wrote {bytes_written} bytes to {path}"
         logger.info(success_message)
         return success_message
@@ -36,8 +42,10 @@ async def write_file(path: str, content: str) -> str:
         return error_message
 
 
-def append_to_file(path: str, content: str) -> str:
-    """Appends content to the end of a specified file."""
+def append_to_file(path: str, content: str, vector_context_service: VectorContextService) -> str:
+    """
+    Appends content to a file and re-indexes it for RAG if it's a Python file.
+    """
     try:
         logger.info(f"Attempting to append to file: {path}")
         path_obj = Path(path)
@@ -48,6 +56,11 @@ def append_to_file(path: str, content: str) -> str:
             if path_obj.read_text(encoding='utf-8') and not path_obj.read_text(encoding='utf-8').endswith('\n'):
                 f.write('\n')
             bytes_written = f.write(content)
+
+        if vector_context_service and path_obj.suffix == '.py':
+            full_content = path_obj.read_text(encoding='utf-8')
+            asyncio.run(vector_context_service.reindex_file(path_obj, full_content))
+            logger.info(f"Synchronously re-indexed '{path}' after append for RAG context.")
 
         success_message = f"Successfully appended {bytes_written} bytes to {path}"
         logger.info(success_message)
@@ -269,4 +282,3 @@ def delete_file(path: str) -> str:
         error_message = f"An unexpected error occurred while deleting file {path}: {e}"
         logger.exception(error_message)
         return error_message
-
