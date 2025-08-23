@@ -32,7 +32,9 @@ def run_tests(project_context: ProjectContext) -> str:
         "pytest"
     ]
 
-    logger.info(f"Executing test command: '{" ".join(command)}' in '{working_dir}'")
+    # This is the corrected line.
+    command_str = " ".join(command)
+    logger.info(f"Executing test command: '{command_str}' in '{working_dir}'")
     try:
         result = subprocess.run(
             command,
