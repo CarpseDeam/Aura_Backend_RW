@@ -10,7 +10,7 @@ import functools
 from pydantic import BaseModel
 
 from src.core.websockets import websocket_manager
-
+from src.services import mission_control
 from src.dependencies import get_aura_services, rehydrate_services_for_background_task
 from src.core.managers import ServiceManager, ProjectManager
 from src.services import DevelopmentTeamService, ConductorService, MissionLogService, VectorContextService
@@ -211,6 +211,20 @@ async def dispatch_agent_mission(
         project_name=request.project_name,
     )
     return {"message": "Dispatch acknowledged. Aura is now executing the mission plan."}
+
+
+@router.post("/{project_name}/stop", status_code=status.HTTP_200_OK)
+async def stop_agent_mission(
+    project_name: str, # Included for path consistency, but not strictly needed
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Signals the running mission for the current user to stop gracefully.
+    """
+    user_id = str(current_user.id)
+    logger.info(f"Received stop request for user {user_id}'s mission.")
+    await mission_control.request_mission_stop(user_id)
+    return {"message": f"Stop signal sent for user {user_id}'s mission."}
 
 
 @router.get("/", response_model=List[str])
