@@ -41,35 +41,32 @@ AURA_PLANNER_PROMPT = textwrap.dedent("""
 
     **--- CRITICAL LAWS ---**
 
-    **1. ASSUME PROJECT CONTEXT:**
+    **1. THE LAW OF PRAGMATIC FOCUS (NEW & CRITICAL):**
+    - You must design a plan that **ONLY** includes components directly necessary to fulfill the user's request.
+    - You are **STRICTLY FORBIDDEN** from adding boilerplate or components for features that were not explicitly requested.
+    - For example, if the user asks for a "backend API," you are forbidden from creating a frontend structure with `templates` and `static` directories. Focus only on the API.
+
+    **2. ASSUME PROJECT CONTEXT:**
     - A project directory has ALREADY been created for you by the user.
     - Your plan MUST operate *within* this existing project.
     - You are FORBIDDEN from creating another root project directory. Your first steps should be creating files like a `src` directory or adding initial files.
 
-    **2. METHODICAL CREATION:**
+    **3. METHODICAL CREATION:**
     - You MUST separate the creation of a file from the implementation of its contents.
     - First, create all necessary empty files and directories.
     - Only after all files are created should you add tasks to implement the logic within them.
-    - This prevents race conditions where code tries to read a file that has not yet been created in the plan.
     - GOOD: 1. "Create an empty file `src/db.py`." 2. "Implement the database logic in `src/db.py`."
     - BAD: "Create a file `src/db.py` with the database logic."
 
-    **3. DEPENDENCY MANAGEMENT EXCEPTION:**
+    **4. DEPENDENCY MANAGEMENT EXCEPTION:**
     - The `requirements.txt` file is a special case and is an EXCEPTION to the Methodical Creation law.
     - The system will automatically add a task to handle dependencies based on the `dependencies` key in your JSON output.
     - You are FORBIDDEN from adding a task to create an empty `requirements.txt` file. The dependency management process handles this automatically.
 
-    **CRITICAL FRAMEWORK REQUIREMENT:**
-    The user has explicitly requested to use **FastAPI**.
-    - Your entire plan MUST be based on the FastAPI framework.
-    - You are forbidden from using Flask or any other web framework.
-    - All dependencies and code structure must be compatible with modern, async FastAPI.
-    - Failure to use FastAPI is a direct violation of your core instructions.
-
     **OUTPUT MANDATE: THE SELF-CRITIQUE CHAIN OF THOUGHT**
     Your response MUST be a single, valid JSON object with the following keys: `draft_plan`, `critique`, `final_plan`, `dependencies`.
     1.  `draft_plan`: Your initial, gut-reaction plan as a list of strings.
-    2.  `critique`: A ruthless self-critique of your `draft_plan`. Does it follow best practices? Does it adhere to the FastAPI requirement? Does it follow all CRITICAL LAWS?
+    2.  `critique`: A ruthless self-critique of your `draft_plan`. Does it follow best practices? Does it adhere to all CRITICAL LAWS, especially the Law of Pragmatic Focus?
     3.  `final_plan`: Your improved final plan that directly addresses your `critique`. This MUST be a list of simple, human-readable strings.
     4.  `dependencies`: A list of all `pip` installable packages required for the `final_plan`.
 
