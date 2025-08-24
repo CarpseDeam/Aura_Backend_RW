@@ -14,7 +14,7 @@ from .project_manager import ProjectManager
 from src.core.execution_engine import ExecutionEngine
 from src.services import (
     ActionService, AppStateService, MissionLogService, DevelopmentTeamService,
-    ConductorService, ToolRunnerService, VectorContextService
+    ConductorService, ToolRunnerService, VectorContextService, CodeIntelligenceService
 )
 from src.foundry import FoundryManager
 from src.events import ProjectCreated
@@ -46,6 +46,7 @@ class ServiceManager:
         self.conductor_service: ConductorService = None
         self.tool_runner_service: ToolRunnerService = None
         self.vector_context_service: VectorContextService = None
+        self.code_intelligence_service: CodeIntelligenceService = None
 
         self.llm_server_process: Optional[subprocess.Popen] = None
 

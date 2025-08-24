@@ -11,9 +11,9 @@ from pydantic import BaseModel
 
 from src.core.websockets import websocket_manager
 from src.services import mission_control
-from src.dependencies import get_aura_services, rehydrate_services_for_background_task
+from src.dependencies import get_aura_services, rehydrate_services_for_background_task, get_event_bus
 from src.core.managers import ServiceManager, ProjectManager
-from src.services import DevelopmentTeamService, ConductorService, MissionLogService, VectorContextService
+from src.services import DevelopmentTeamService, ConductorService, MissionLogService, VectorContextService, CodeIntelligenceService
 from src.db.models import User
 from src.api.auth import get_current_user
 
@@ -109,6 +109,19 @@ async def run_initial_project_index(
         vcs.load_for_project(Path(project_path_str), user_id)
         await vcs.reindex_entire_project()
         logger.info(f"BACKGROUND: Successfully completed initial project index for {project_name}")
+
+@background_task_handler(error_message_prefix="Background code intelligence indexing failed")
+async def run_initial_code_index(
+        services: ServiceManager, user_id: int, project_name: str, **kwargs
+):
+    """Wrapper to run the initial, full-project code intelligence indexing task in the background."""
+    logger.info(f"BACKGROUND: Starting initial code intelligence index for {project_name}")
+    project_path_str = services.project_manager.load_project(project_name)
+    cis: CodeIntelligenceService = services.code_intelligence_service
+    if cis and project_path_str:
+        cis.load_for_project(Path(project_path_str))
+        await cis.build_index_for_project()
+        logger.info(f"BACKGROUND: Successfully completed initial code intelligence index for {project_name}")
 
 
 router = APIRouter(
@@ -265,12 +278,24 @@ async def load_project_and_auto_index(
 
     project_path = Path(project_path_str)
     vcs: VectorContextService = aura_services.vector_context_service
+    cis: CodeIntelligenceService = aura_services.code_intelligence_service
     message = f"Project '{project_name}' loaded successfully."
 
     if vcs:
         # --- THE FIX ---
         vcs.load_for_project(project_path, current_user.id)
         # --- END FIX ---
+        # Also load the code intelligence service and trigger its indexer
+        if cis:
+            cis.load_for_project(project_path)
+            background_tasks.add_task(
+                run_initial_code_index,
+                services=aura_services,
+                user_id=current_user.id,
+                project_name=project_name
+            )
+
+
         if vcs.collection and vcs.collection.count() == 0:
             message += " Initial project scan for AI context has been started in the background."
             background_tasks.add_task(
@@ -363,4 +388,22 @@ async def write_project_file_content(
         content=request.content
     )
 
+    # Also trigger the code intelligence re-indexer
+    background_tasks.add_task(
+        run_code_reindex_task,
+        services=aura_services,
+        user_id=current_user.id,
+        project_name=project_name,
+        file_path_str=full_file_path_str,
+        content=request.content
+    )
+
     return None
+
+@background_task_handler(error_message_prefix="Background code re-indexing failed")
+async def run_code_reindex_task(services: ServiceManager, user_id: int, project_name: str, file_path_str: str, content: str, **kwargs):
+    project_path_str = services.project_manager.load_project(project_name)
+    cis: CodeIntelligenceService = services.code_intelligence_service
+    if cis and project_path_str:
+        cis.load_for_project(Path(project_path_str))
+        await cis.update_index_for_file(Path(file_path_str), content)

@@ -11,7 +11,7 @@ from src.db import models, crud
 from src.db.models import User
 from src.services import (
     MissionLogService, VectorContextService, ToolRunnerService,
-    DevelopmentTeamService, ConductorService
+    DevelopmentTeamService, ConductorService, CodeIntelligenceService
 )
 from src.foundry import FoundryManager
 from src.core.managers import ProjectManager, ServiceManager
@@ -80,6 +80,7 @@ def get_aura_services(
     # Services now get the singleton bus from the ServiceManager
     services.mission_log_service = MissionLogService(project_manager, bus)
     services.vector_context_service = VectorContextService()
+    services.code_intelligence_service = CodeIntelligenceService()
     services.tool_runner_service = ToolRunnerService(bus, services)
     services.development_team_service = DevelopmentTeamService(bus, services)
     services.conductor_service = ConductorService(bus, services)
