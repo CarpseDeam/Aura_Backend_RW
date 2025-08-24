@@ -1,4 +1,5 @@
 # llm_server/main.py
+# llm_server/main.py
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -67,17 +68,20 @@ async def stream_llm_response(
 
                     # Only check for phases at the top level of the JSON object
                     if brace_counter == 1:
-                        if '"draft_plan":' in json_accumulator and 'draft_plan' not in phases_yielded:
-                            yield json.dumps({"type": "phase", "content": "Drafting initial plan..."}) + "\n"
-                            phases_yielded.add('draft_plan')
+                        if '"draft_blueprint":' in json_accumulator and 'draft_blueprint' not in phases_yielded:
+                            yield json.dumps({"type": "phase",
+                                              "content": "Architect is designing the high-level blueprint..."}) + "\n"
+                            phases_yielded.add('draft_blueprint')
                         if '"critique":' in json_accumulator and 'critique' not in phases_yielded:
                             yield json.dumps(
-                                {"type": "phase", "content": "Critiquing the draft for architectural flaws..."}) + "\n"
+                                {"type": "phase",
+                                 "content": "Architect is critiquing the blueprint for flaws..."}) + "\n"
                             phases_yielded.add('critique')
-                        if '"final_plan":' in json_accumulator and 'final_plan' not in phases_yielded:
+                        if '"final_blueprint":' in json_accumulator and 'final_blueprint' not in phases_yielded:
                             yield json.dumps(
-                                {"type": "phase", "content": "Refining the final plan based on the critique..."}) + "\n"
-                            phases_yielded.add('final_plan')
+                                {"type": "phase",
+                                 "content": "Architect is refining the final blueprint..."}) + "\n"
+                            phases_yielded.add('final_blueprint')
 
                 if brace_counter <= 0 and in_json_block:
                     in_json_block = False

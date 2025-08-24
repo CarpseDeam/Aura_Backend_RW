@@ -13,8 +13,8 @@ from pathlib import Path
 
 from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
-from src.prompts.creative import AURA_PLANNER_PROMPT, AURA_REPLANNER_PROMPT, AURA_MISSION_SUMMARY_PROMPT, \
-    INTENT_DETECTION_PROMPT
+from src.prompts.creative import (ARCHITECT_PROMPT, SEQUENCER_PROMPT, AURA_REPLANNER_PROMPT,
+                                  AURA_MISSION_SUMMARY_PROMPT, INTENT_DETECTION_PROMPT)
 from src.prompts.coder import CODER_PROMPT_STREAMING
 from src.prompts.master_rules import SENIOR_ARCHITECT_HEURISTIC_RULE, TYPE_HINTING_RULE, DOCSTRING_RULE, \
     CLEAN_CODE_RULE, MAESTRO_CODER_PHILOSOPHY_RULE, RAW_CODE_OUTPUT_RULE
@@ -174,31 +174,62 @@ class DevelopmentTeamService:
 
     async def run_aura_planner_workflow(self, user_id: str, user_idea: str, conversation_history: list,
                                         project_name: str):
-        self.log("info", f"Aura planner workflow initiated for user {user_id}: '{user_idea[:50]}...'")
-        prompt = AURA_PLANNER_PROMPT.format(user_idea=user_idea, project_name=project_name)
-        messages = [{"role": "user", "content": prompt}]
+        """
+        Orchestrates the new two-step planning assembly line: Architect -> Sequencer.
+        """
+        self.log("info", f"Aura planning assembly line initiated for user {user_id}: '{user_idea[:50]}...'")
         self.refresh_llm_assignments()
-        response_str = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
-        if not response_str or response_str.strip().startswith("Error:"):
-            error_content = response_str or "The Architect AI returned an empty or invalid response."
-            await self.handle_error(user_id, "Aura", error_content)
+
+        # --- Phase 1: Architect ---
+        architect_prompt = ARCHITECT_PROMPT.format(user_idea=user_idea, project_name=project_name)
+        messages = [{"role": "user", "content": architect_prompt}]
+        blueprint_response = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
+
+        if not blueprint_response or blueprint_response.strip().startswith("Error:"):
+            error_content = blueprint_response or "The Architect AI returned an empty or invalid response."
+            await self.handle_error(user_id, "Architect", error_content)
             return
+
         try:
-            plan_data = self._parse_json_response(response_str)
-            dependencies = plan_data.get("dependencies", [])
-            final_plan = plan_data.get("final_plan", [])
-            if not final_plan or not isinstance(final_plan, list):
-                raise ValueError("Aura's final_plan was empty or malformed.")
+            blueprint_data = self._parse_json_response(blueprint_response)
+            final_blueprint = blueprint_data.get("final_blueprint")
+            if not final_blueprint or not isinstance(final_blueprint, dict):
+                raise ValueError("Architect's final_blueprint was missing or malformed.")
+        except (ValueError, json.JSONDecodeError) as e:
+            await self.handle_error(user_id, "Architect", f"Failed to create a valid blueprint: {e}.")
+            self.log("error", f"Architect failure for user {user_id}. Raw response: {blueprint_response}")
+            return
+
+        # --- Phase 2: Sequencer ---
+        await websocket_manager.broadcast_to_user(
+            {"type": "phase", "content": "Sequencer is generating the detailed task list..."}, str(user_id))
+        sequencer_prompt = SEQUENCER_PROMPT.format(blueprint=json.dumps(final_blueprint, indent=2))
+        messages = [{"role": "user", "content": sequencer_prompt}]
+        plan_response = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
+
+        if not plan_response or plan_response.strip().startswith("Error:"):
+            error_content = plan_response or "The Sequencer AI returned an empty or invalid response."
+            await self.handle_error(user_id, "Sequencer", error_content)
+            return
+
+        try:
+            plan_data = self._parse_json_response(plan_response)
+            final_plan_steps = plan_data.get("final_plan", [])
+            if not final_plan_steps or not isinstance(final_plan_steps, list):
+                raise ValueError("Sequencer's final_plan was empty or malformed.")
+
+            dependencies = final_blueprint.get("dependencies", [])
             if dependencies:
                 deps_str = ", ".join(dependencies)
-                final_plan.insert(0, f"Add the following dependencies to requirements.txt: {deps_str}")
+                final_plan_steps.insert(0, f"Add the following dependencies to requirements.txt: {deps_str}")
+
             mission_log_service = self.service_manager.mission_log_service
-            await mission_log_service.set_initial_plan(user_id, final_plan, user_idea)
+            await mission_log_service.set_initial_plan(user_id, final_plan_steps, user_idea)
             await self._post_chat_message(user_id, "Aura",
                                           "I've created a plan. Review it in 'Agent TODO' and click 'Dispatch Aura' to begin.")
         except (ValueError, json.JSONDecodeError) as e:
-            await self.handle_error(user_id, "Aura", f"Failed to create a valid plan: {e}.")
-            self.log("error", f"Aura planner failure for user {user_id}. Raw response: {response_str}")
+            await self.handle_error(user_id, "Sequencer", f"Failed to create a valid plan: {e}.")
+            self.log("error", f"Sequencer failure for user {user_id}. Raw response: {plan_response}")
 
     def _get_relevant_plan_context(self, current_task_id: int, full_plan: List[Dict]) -> str:
         context_lines = []
