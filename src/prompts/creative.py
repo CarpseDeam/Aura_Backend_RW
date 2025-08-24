@@ -87,9 +87,10 @@ SEQUENCER_PROMPT = textwrap.dedent("""
     - GOOD: 1. "Create the `src/db` directory." 2. "Create an empty file `src/db/database.py`." 3. "Implement the SQLAlchemy setup in `src/db/database.py`."
     - BAD: "Create a file `src/db/database.py` with the SQLAlchemy setup."
 
-    **2. THE LAW OF DEPENDENCY FIRST:**
-    - If the blueprint includes dependencies, the VERY FIRST STEP of your plan must be to add them to `requirements.txt`. The system handles the installation automatically.
-    - Example Task: "Add FastAPI and Uvicorn to requirements.txt".
+    **2. THE LAW OF DEPENDENCY EXCLUSION (CRITICAL):**
+    - The 'dependencies' key in the blueprint is for internal system use ONLY.
+    - You are **FORBIDDEN** from creating any tasks related to 'requirements.txt' or installing dependencies. The system handles this automatically.
+    - Do not create a task to add dependencies, and do not create an empty 'requirements.txt' file.
 
     **OUTPUT MANDATE: THE FINAL PLAN**
     Your response MUST be a single, valid JSON object with one key: `final_plan`. The value MUST be a list of human-readable strings representing the ordered tasks. Do not use Markdown or any other formatting.
@@ -113,8 +114,7 @@ AURA_REPLANNER_PROMPT = textwrap.dedent("""
         `{user_goal}`
 
     2.  **MISSION HISTORY:** The full list of tasks attempted so far. Note which ones succeeded and which failed.
-        ```
-        {mission_log}
+        ```        {mission_log}
         ```
 
     3.  **THE FAILED TASK:** This is the specific task that could not be completed, even after retries.

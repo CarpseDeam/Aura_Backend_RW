@@ -5,7 +5,6 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 import os
 from src.event_bus import EventBus
-from src.core.managers import ProjectManager, ServiceManager
 from src.db.database import get_db, SessionLocal
 from src.api.auth import get_current_user
 from src.db import models, crud
@@ -15,26 +14,35 @@ from src.services import (
     DevelopmentTeamService, ConductorService
 )
 from src.foundry import FoundryManager
+from src.core.managers import ProjectManager, ServiceManager
 from src.core.llm_client import LLMClient
 
 # Initialize logger
 logger = logging.getLogger(__name__)
 
+# --- SINGLETON INSTANCES ---
+# These components are instantiated once and shared across the entire application.
+# This is crucial for components like the EventBus that manage global state.
+event_bus = EventBus()
 foundry_manager = FoundryManager()
+# --- END SINGLETONS ---
 
 def get_foundry_manager() -> FoundryManager:
-    """Dependency to provide the shared FoundryManager instance."""
+    """Dependency to provide the shared FoundryManager singleton."""
     return foundry_manager
 
 def get_event_bus() -> EventBus:
-    """Dependency to provide a shared EventBus instance per request."""
-    return EventBus()
+    """Dependency to provide the shared EventBus singleton."""
+    return event_bus
 
 def get_project_manager(
-    event_bus: EventBus = Depends(get_event_bus),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    bus: EventBus = Depends(get_event_bus) # Inject the singleton bus
 ) -> ProjectManager:
-    """Dependency to provide a shared ProjectManager instance per request."""
+    """
+    Dependency to provide a ProjectManager instance, scoped to the current user.
+    It now correctly uses the application-wide EventBus singleton.
+    """
     user_id = str(current_user.id)
     persistent_storage_path = Path("/data")
     user_workspace_path = persistent_storage_path / "workspaces" / user_id
@@ -46,12 +54,13 @@ def get_aura_services(
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db),
         fm: FoundryManager = Depends(get_foundry_manager),
-        project_manager: ProjectManager = Depends(get_project_manager)
+        project_manager: ProjectManager = Depends(get_project_manager),
+        bus: EventBus = Depends(get_event_bus) # Inject the singleton bus
 ) -> ServiceManager:
     user_id = str(current_user.id)
     logger.info(f"✅ Spinning up dedicated Aura services for user: {current_user.email} ({user_id})")
 
-    event_bus = project_manager.event_bus
+    # Use the application-wide singleton event bus directly.
     llm_client = LLMClient()
 
     assignments_from_db = crud.get_assignments_for_user(db, user_id=current_user.id)
@@ -60,18 +69,20 @@ def get_aura_services(
         llm_client.set_temperatures({a.role_name: a.temperature for a in assignments_from_db})
         logger.info(f"✅ LLM client pre-populated for user {current_user.id} with {len(assignments_from_db)} assignments.")
 
-    services = ServiceManager(event_bus, project_root=Path("."))
+    # Pass the singleton event bus to the ServiceManager
+    services = ServiceManager(bus, project_root=Path("."))
     services.project_manager = project_manager
     services.llm_client = llm_client
     services.foundry_manager = fm
     services.db = db
     services.user_id = current_user.id
 
-    services.mission_log_service = MissionLogService(project_manager, event_bus)
+    # Services now get the singleton bus from the ServiceManager
+    services.mission_log_service = MissionLogService(project_manager, bus)
     services.vector_context_service = VectorContextService()
-    services.tool_runner_service = ToolRunnerService(event_bus, services)
-    services.development_team_service = DevelopmentTeamService(event_bus, services)
-    services.conductor_service = ConductorService(event_bus, services)
+    services.tool_runner_service = ToolRunnerService(bus, services)
+    services.development_team_service = DevelopmentTeamService(bus, services)
+    services.conductor_service = ConductorService(bus, services)
 
     logger.info(f"✅ Aura services are online and ready for user {user_id}.")
     return services
