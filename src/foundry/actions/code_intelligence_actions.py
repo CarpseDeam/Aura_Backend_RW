@@ -58,63 +58,88 @@ def get_dependencies(code_intelligence_service: CodeIntelligenceService, symbol_
         return "Error: Code Intelligence Service is not available."
 
     definitions = code_intelligence_service.find_symbol_definition(symbol_name)
-
     if not definitions:
         return f"Symbol '{symbol_name}' not found in the project index."
 
+    # In case of multiple definitions, we'll check the first one.
     symbol = definitions[0]
-
     if not symbol.calls:
         return f"Symbol '{symbol_name}' does not appear to call any other indexed functions or methods."
 
     response_parts = [f"Symbol '{symbol_name}' in '{symbol.file_path}' calls the following symbols:"]
     for call in sorted(list(symbol.calls)):
         response_parts.append(f"- {call}")
-
     return "\n".join(response_parts)
 
 
 class RenameTransformer(ast.NodeTransformer):
+    """
+    An AST NodeTransformer to safely rename variables, functions, and classes.
+    """
     def __init__(self, old_name, new_name):
-        self.old_name, self.new_name = old_name, new_name
+        self.old_name = old_name
+        self.new_name = new_name
 
     def visit_Name(self, node):
-        if node.id == self.old_name: node.id = self.new_name
+        if node.id == self.old_name:
+            node.id = self.new_name
         return node
 
     def visit_FunctionDef(self, node):
-        if node.name == self.old_name: node.name = self.new_name
+        if node.name == self.old_name:
+            node.name = self.new_name
         self.generic_visit(node)
         return node
 
     def visit_AsyncFunctionDef(self, node):
-        if node.name == self.old_name: node.name = self.new_name
+        if node.name == self.old_name:
+            node.name = self.new_name
         self.generic_visit(node)
         return node
 
     def visit_ClassDef(self, node):
-        if node.name == self.old_name: node.name = self.new_name
+        if node.name == self.old_name:
+            node.name = self.new_name
         self.generic_visit(node)
         return node
 
     def visit_arg(self, node):
-        if node.arg == self.old_name: node.arg = self.new_name
+        if node.arg == self.old_name:
+            node.arg = self.new_name
         return node
 
 
 def rename_symbol(project_manager: ProjectManager, code_intelligence_service: CodeIntelligenceService, old_name: str,
                   new_name: str) -> str:
+    """
+    Performs a project-wide safe rename of a symbol and its usages.
+    """
+    if not code_intelligence_service:
+        return "Error: Code Intelligence Service is not available."
+
     definitions = code_intelligence_service.find_symbol_definition(old_name)
-    if not definitions: return f"Error: Cannot rename. Symbol '{old_name}' not found."
+    if not definitions:
+        return f"Error: Cannot rename. Symbol '{old_name}' not found in the project index."
+
     references = code_intelligence_service.find_references(old_name)
+
+    # Combine all files that need modification (where the symbol is defined or referenced)
     files_to_modify = {s.file_path for s in definitions + references}
+
     for rel_path_str in files_to_modify:
+        if not project_manager.active_project_path:
+            return "Error: No active project to perform rename in."
         full_path = project_manager.active_project_path / rel_path_str
         try:
-            tree = ast.parse(full_path.read_text(encoding='utf-8'))
-            new_tree = RenameTransformer(old_name, new_name).visit(tree)
+            content = full_path.read_text(encoding='utf-8')
+            tree = ast.parse(content)
+            transformer = RenameTransformer(old_name, new_name)
+            new_tree = transformer.visit(tree)
             ast.fix_missing_locations(new_tree)
-            full_path.write_text(ast.unparse(new_tree), encoding='utf-8')
+            new_content = ast.unparse(new_tree)
+            full_path.write_text(new_content, encoding='utf-8')
+            logger.info(f"Successfully applied rename in {rel_path_str}")
         except Exception as e:
             return f"Failed to rename in file {rel_path_str}: {e}"
+
     return f"Successfully renamed '{old_name}' to '{new_name}' across {len(files_to_modify)} files."

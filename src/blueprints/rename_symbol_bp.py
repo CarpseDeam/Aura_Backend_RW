@@ -1,20 +1,24 @@
-# blueprints/find_references_bp.py
+# src/blueprints/rename_symbol_bp.py
 from src.foundry.blueprints import Blueprint
 
 params = {
     "type": "object",
     "properties": {
-        "symbol_name": {
+        "old_name": {
             "type": "string",
-            "description": "The exact name of the function or class to find references for.",
+            "description": "The current name of the function or class to be renamed.",
+        },
+        "new_name": {
+            "type": "string",
+            "description": "The new name for the symbol.",
         }
     },
-    "required": ["symbol_name"],
+    "required": ["old_name", "new_name"],
 }
 
 blueprint = Blueprint(
-    id="find_references",
-    description="Finds all locations in the code that call or reference a specific function or class. Answers 'Where is X used?'.",
+    id="rename_symbol",
+    description="Performs a project-wide safe rename of a function or class and all of its usages using the code index. This is the most powerful refactoring tool for renaming.",
     parameters=params,
-    action_function_name="find_references"
+    action_function_name="rename_symbol"
 )

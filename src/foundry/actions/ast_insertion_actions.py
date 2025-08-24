@@ -95,7 +95,6 @@ def add_function_to_file(path: str, function_code: str) -> str:
 
         new_function_def = None
         for node in new_function_tree.body:
-            # --- THE FIX: Recognize both 'def' and 'async def' ---
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 new_function_def = node
                 break
@@ -173,7 +172,6 @@ def add_method_to_class(path: str, class_name: str, name: str, args: list, is_as
         )
         method_body = [ast.Pass()]
 
-        # --- THE FIX: Create either a sync or async function definition ---
         if is_async:
             new_method = ast.AsyncFunctionDef(
                 name=name, args=arguments, body=method_body, decorator_list=[]
