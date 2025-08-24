@@ -58,10 +58,10 @@ class DevelopmentTeamService:
             llm_client.set_temperatures({a.role_name: a.temperature for a in assignments_from_db})
             print(f"LLM client assignments refreshed for user {user_id}.")
 
-    async def _unified_llm_streamer(self, user_id: int, role: str, messages: List[Dict[str, Any]],
-                                    is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None,
-                                    stream_to_user_socket_as: Optional[str] = None,
-                                    file_path: Optional[str] = None) -> str:
+    async def unified_llm_streamer(self, user_id: int, role: str, messages: List[Dict[str, Any]],
+                                   is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None,
+                                   stream_to_user_socket_as: Optional[str] = None,
+                                   file_path: Optional[str] = None) -> str:
         llm_client = self.service_manager.llm_client
         db = self.service_manager.db
         if not self.llm_server_url:
@@ -123,7 +123,7 @@ class DevelopmentTeamService:
             await self._post_chat_message(str(user_id), "Aura", error_msg, is_error=True)
             return error_msg
 
-    def _parse_json_response(self, response: str) -> dict:
+    def parse_json_response(self, response: str) -> dict:
         try:
             return json.loads(response)
         except json.JSONDecodeError:
@@ -144,13 +144,13 @@ class DevelopmentTeamService:
         )
         messages = [{"role": "user", "content": prompt}]
         self.refresh_llm_assignments()
-        response_str = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
+        response_str = await self.unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
         if not response_str or response_str.startswith("Error:"):
             await self.handle_error(user_id, "IntentDetector",
                                     response_str or "Intent detector returned an empty response.")
             return "CHAT"
         try:
-            intent_data = self._parse_json_response(response_str)
+            intent_data = self.parse_json_response(response_str)
             intent = intent_data.get("intent", "CHAT").upper()
             if intent not in ["PLAN", "CHAT"]:
                 self.log("warning", f"Intent detector returned invalid intent: {intent}. Defaulting to CHAT.")
@@ -167,7 +167,7 @@ class DevelopmentTeamService:
         prompt = COMPANION_PROMPT.format(conversation_history=history_str, user_prompt=user_prompt)
         messages = [{"role": "user", "content": prompt}]
         self.refresh_llm_assignments()
-        response_str = await self._unified_llm_streamer(int(user_id), "chat", messages)
+        response_str = await self.unified_llm_streamer(int(user_id), "chat", messages)
         if response_str.startswith("Error:"):
             await self.handle_error(user_id, "Companion", response_str)
             return "I'm sorry, I seem to be having trouble connecting to my creative core right now."
@@ -184,7 +184,7 @@ class DevelopmentTeamService:
         # --- Phase 1: Architect ---
         architect_prompt = ARCHITECT_PROMPT.format(user_idea=user_idea, project_name=project_name)
         messages = [{"role": "user", "content": architect_prompt}]
-        blueprint_response = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
+        blueprint_response = await self.unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
 
         if not blueprint_response or blueprint_response.strip().startswith("Error:"):
             error_content = blueprint_response or "The Architect AI returned an empty or invalid response."
@@ -192,7 +192,7 @@ class DevelopmentTeamService:
             return
 
         try:
-            blueprint_data = self._parse_json_response(blueprint_response)
+            blueprint_data = self.parse_json_response(blueprint_response)
             final_blueprint = blueprint_data.get("final_blueprint")
             if not final_blueprint or not isinstance(final_blueprint, dict):
                 raise ValueError("Architect's final_blueprint was missing or malformed.")
@@ -206,7 +206,7 @@ class DevelopmentTeamService:
             {"type": "phase", "content": "Sequencer is generating the detailed task list..."}, str(user_id))
         sequencer_prompt = SEQUENCER_PROMPT.format(blueprint=json.dumps(final_blueprint, indent=2))
         messages = [{"role": "user", "content": sequencer_prompt}]
-        plan_response = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
+        plan_response = await self.unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
 
         if not plan_response or plan_response.strip().startswith("Error:"):
             error_content = plan_response or "The Sequencer AI returned an empty or invalid response."
@@ -214,7 +214,7 @@ class DevelopmentTeamService:
             return
 
         try:
-            plan_data = self._parse_json_response(plan_response)
+            plan_data = self.parse_json_response(plan_response)
             final_plan_steps = plan_data.get("final_plan", [])
             if not final_plan_steps or not isinstance(final_plan_steps, list):
                 raise ValueError("Sequencer's final_plan was empty or malformed.")
@@ -272,7 +272,7 @@ class DevelopmentTeamService:
             CLEAN_CODE_RULE=CLEAN_CODE_RULE.strip(), RAW_CODE_OUTPUT_RULE=RAW_CODE_OUTPUT_RULE.strip())
         messages = [{"role": "user", "content": prompt}]
         self.refresh_llm_assignments()
-        full_code = await self._unified_llm_streamer(int(user_id), "coder", messages,
+        full_code = await self.unified_llm_streamer(int(user_id), "coder", messages,
                                                      stream_to_user_socket_as='code_stream_chunk', file_path=path)
         if full_code.startswith("Error:"):
             return full_code
@@ -300,12 +300,12 @@ class DevelopmentTeamService:
             failed_task=failed_task_str, error_message=error_message)
         messages = [{"role": "user", "content": prompt}]
         self.refresh_llm_assignments()
-        response_str = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
+        response_str = await self.unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
         if not response_str or response_str.startswith("Error:"):
             await self.handle_error(user_id, "Aura", response_str or "Re-planner returned an empty response.")
             return
         try:
-            new_plan_data = self._parse_json_response(response_str)
+            new_plan_data = self.parse_json_response(response_str)
             new_plan_steps = new_plan_data.get("plan", [])
             if not new_plan_steps:
                 raise ValueError("Re-planner returned an empty or malformed plan.")
@@ -333,14 +333,14 @@ class DevelopmentTeamService:
         messages = [{"role": "user", "content": prompt}]
         self.refresh_llm_assignments()
 
-        response_str = await self._unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
+        response_str = await self.unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
 
         if not response_str or response_str.startswith("Error:"):
             await self.handle_error(user_id, "FinalPolish", response_str or "The Linter AI returned an empty response.")
             return []
 
         try:
-            fix_data = self._parse_json_response(response_str)
+            fix_data = self.parse_json_response(response_str)
             fixes = fix_data.get("fixes", [])
             if not isinstance(fixes, list):
                 raise ValueError("The 'fixes' key must be a list.")
@@ -365,7 +365,7 @@ class DevelopmentTeamService:
         prompt = AURA_MISSION_SUMMARY_PROMPT.format(completed_tasks=task_descriptions)
         messages = [{"role": "user", "content": prompt}]
         self.refresh_llm_assignments()
-        summary = await self._unified_llm_streamer(int(user_id), "chat", messages)
+        summary = await self.unified_llm_streamer(int(user_id), "chat", messages)
         return summary.strip() if summary.strip() else "Mission accomplished!"
 
     async def _post_chat_message(self, user_id: str, sender: str, message: str, is_error: bool = False):
