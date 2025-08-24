@@ -1,28 +1,26 @@
-# Use an official Python runtime as a parent image
-FROM python:3.11-slim
+# Dockerfile
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
+# 1. Start with an official Python base image that includes Playwright's dependencies.
+FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy
 
-# Set the working directory in the container
+# 2. Set the working directory inside the container.
 WORKDIR /app
 
-# --- THE OPTIMIZATION MAGIC ---
-# 1. Copy ONLY the requirements file first.
+# 3. Copy the requirements file and install Python dependencies first.
+# This is a best practice that leverages Docker's caching.
 COPY requirements.txt .
-
-# 2. Install the dependencies. This layer will be cached and only re-run
-#    if requirements.txt changes. This is the biggest time-saver.
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 3. Now, copy the rest of your application code.
+# 4. This is the crucial step! We install ONLY the chromium browser and its
+# necessary system-level dependencies. This keeps the image smaller.
+RUN playwright install --with-deps chromium
+
+# 5. Copy the rest of your application code into the container.
 COPY . .
 
-# Expose the port the app runs on
-EXPOSE 8080
+# 6. Tell Docker what port the application will run on. Railway will use this.
+EXPOSE 8000
 
-# --- THE FIX for Railway ---
-# Railway provides the PORT environment variable. Gunicorn will bind to it.
-# This command runs your application using the Gunicorn production server.
-CMD ["gunicorn", "-c", "gunicorn.conf.py", "src.main:app"]
+# 7. The command to run your application. This new format uses a shell
+# to correctly expand the ${PORT} environment variable.
+CMD ["/bin/sh", "-c", "gunicorn main:app --workers 2 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:${PORT}"]
