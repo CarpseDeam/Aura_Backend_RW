@@ -47,12 +47,13 @@ class ToolRunnerService:
             'mission_log_service': self.service_manager.mission_log_service,
             'vector_context_service': self.service_manager.vector_context_service,
             'development_team_service': self.service_manager.development_team_service,
+            'code_intelligence_service': self.service_manager.code_intelligence_service,
             'llm_client': self.service_manager.llm_client,
             'event_bus': self.event_bus,
         }
 
-    async def run_tool_by_dict(self, tool_call_dict: dict, user_id: str) -> Optional[Any]:
-        """Convenience method to run a tool from a dictionary."""
+    async def run_tool_by_dict(self, tool_call_dict: dict, **kwargs) -> Optional[Any]:
+        """Convenience method to run a tool from a dictionary, passing extra context."""
         tool_name = tool_call_dict.get("tool_name")
         foundry_manager = self.service_manager.foundry_manager
         blueprint = foundry_manager.get_blueprint(tool_name)
@@ -62,13 +63,14 @@ class ToolRunnerService:
             return error_msg
 
         invocation = BlueprintInvocation(blueprint=blueprint, parameters=tool_call_dict.get('arguments', {}))
-        return await self.run_tool(invocation, user_id)
+        return await self.run_tool(invocation, **kwargs)
 
-    async def run_tool(self, invocation: BlueprintInvocation, user_id: str) -> Optional[Any]:
+    async def run_tool(self, invocation: BlueprintInvocation, **kwargs) -> Optional[Any]:
         """Executes a single blueprint invocation."""
         blueprint = invocation.blueprint
         action_id = blueprint.id
         foundry_manager = self.service_manager.foundry_manager
+        user_id = kwargs.get('user_id')
 
         action_function = foundry_manager.get_action(blueprint.action_function_name)
         if not action_function:
@@ -76,15 +78,12 @@ class ToolRunnerService:
             print(error_msg)
             return error_msg
 
-        execution_params = self._prepare_parameters(action_function, invocation.parameters)
+        execution_params = self._prepare_parameters(action_function, invocation.parameters, kwargs)
         display_params = self._create_display_params(execution_params)
 
         print(f"▶️  Executing: {action_id} with params {display_params}")
 
-        # --- NEW UX IMPROVEMENT ---
-        # If we're about to write a file, notify the UI immediately so it can
-        # open a tab and show a pending state.
-        if action_id == 'write_file' and 'path' in execution_params:
+        if user_id and action_id == 'write_file' and 'path' in execution_params:
             project_manager = self.service_manager.project_manager
             try:
                 full_path = Path(execution_params['path'])
@@ -94,7 +93,6 @@ class ToolRunnerService:
                     "content": {"filePath": relative_path}
                 }, user_id)
             except Exception as e:
-                # Non-critical error, just log it.
                 logger.warning(f"Could not send file_writing_pending message: {e}")
 
         await asyncio.sleep(0.1)
@@ -115,7 +113,7 @@ class ToolRunnerService:
                 status = "SUCCESS"
 
             project_manager = self.service_manager.project_manager
-            if status == "SUCCESS" and action_id in self.FILESYSTEM_TOOLS:
+            if user_id and status == "SUCCESS" and action_id in self.FILESYSTEM_TOOLS:
                 file_tree = project_manager.get_file_tree()
                 await websocket_manager.broadcast_to_user({
                     "type": "file_tree_updated",
@@ -148,8 +146,8 @@ class ToolRunnerService:
         finally:
             pass
 
-    def _prepare_parameters(self, action_function: callable, action_params: dict) -> dict:
-        execution_params = action_params.copy()
+    def _prepare_parameters(self, action_function: callable, action_params: dict, extra_context: dict) -> dict:
+        execution_params = {**action_params, **extra_context}
         project_manager = self.service_manager.project_manager
         base_path: Optional[Path] = project_manager.active_project_path
         sig = inspect.signature(action_function)
@@ -172,11 +170,17 @@ class ToolRunnerService:
             elif param_name == 'project_context':
                 execution_params['project_context'] = project_manager.active_project_context
 
-        return execution_params
+        # Filter out extra context that the function doesn't accept
+        final_params = {}
+        for param_name, param_value in execution_params.items():
+            if param_name in sig.parameters:
+                final_params[param_name] = param_value
+        return final_params
+
 
     def _create_display_params(self, execution_params: dict) -> dict:
         display_params = {}
-        service_keys = list(self._get_service_map().keys()) + ['project_context']
+        service_keys = list(self._get_service_map().keys()) + ['project_context', 'user_id', 'current_task_id', 'user_idea']
         project_manager = self.service_manager.project_manager
 
         for key, value in execution_params.items():

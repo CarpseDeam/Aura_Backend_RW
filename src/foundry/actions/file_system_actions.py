@@ -5,32 +5,62 @@ All functions in this module assume that any relative paths have been
 resolved to absolute paths by the ExecutorService before being passed in.
 """
 import logging
-import shutil
 import asyncio
+import shutil
 from pathlib import Path
-from src.event_bus import EventBus
-from src.events import StreamCodeChunk
-from src.core.managers import ProjectManager
-from src.services import VectorContextService
+from typing import Optional
+
+from src.services import DevelopmentTeamService, VectorContextService
 
 logger = logging.getLogger(__name__)
 
 
-async def write_file(path: str, content: str, vector_context_service: VectorContextService) -> str:
+async def write_file(
+    path: str,
+    content: Optional[str] = None,
+    task_description: Optional[str] = None,
+    development_team_service: DevelopmentTeamService = None,
+    vector_context_service: VectorContextService = None,
+    user_id: Optional[str] = None,
+    current_task_id: Optional[int] = None,
+    user_idea: Optional[str] = None
+) -> str:
     """
-    Writes content to a specified file, creating directories if necessary.
-    Crucially, it now synchronously re-indexes the file for RAG if it's a Python file.
+    Writes content to a file. If task_description is provided, it generates
+    the code first via an AI call, streaming the output to the UI.
     """
-    try:
-        logger.info(f"Attempting to write to file: {path}")
-        path_obj = Path(path)
-        content = content or ""
+    logger.info(f"Attempting to write to file: {path}")
+    final_content = content
 
+    # --- THE FIX: Generation is now part of the tool ---
+    if task_description and development_team_service:
+        if not all([user_id, current_task_id is not None, user_idea]):
+            return "Error: write_file requires user_id, current_task_id, and user_idea for code generation."
+
+        logger.info(f"Generating code for '{path}' based on task description.")
+        generated_code = await development_team_service.generate_code_for_task(
+            user_id=user_id,
+            path=path,
+            task_description=task_description,
+            user_idea=user_idea,
+            current_task_id=current_task_id
+        )
+        if generated_code.startswith("Error:"):
+            return generated_code  # Propagate the error from the generation service
+        final_content = generated_code
+    elif task_description:
+        return "Error: `task_description` was provided, but the DevelopmentTeamService is not available to the tool."
+
+    if final_content is None:
+        return "Error: No content was provided or generated to write to the file."
+
+    try:
+        path_obj = Path(path)
         path_obj.parent.mkdir(parents=True, exist_ok=True)
-        bytes_written = path_obj.write_text(content, encoding='utf-8')
+        bytes_written = path_obj.write_text(final_content, encoding='utf-8')
 
         if vector_context_service and path_obj.suffix == '.py':
-            await vector_context_service.reindex_file(path_obj, content)
+            await vector_context_service.reindex_file(path_obj, final_content)
             logger.info(f"Synchronously re-indexed '{path}' for RAG context.")
 
         success_message = f"Successfully wrote {bytes_written} bytes to {path}"

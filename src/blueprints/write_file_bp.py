@@ -10,7 +10,7 @@ params = {
         },
         "content": {
             "type": "string",
-            "description": "The content to write into the file. For AI-generated code, leave this blank and provide a `task_description` instead."
+            "description": "The content to write into the file. Use this for pre-defined content. If you use this, do not use `task_description`."
         },
         "task_description": {
             "type": "string",

@@ -37,7 +37,7 @@ class ConductorService:
         logger.info("ConductorService initialized.")
 
     async def _get_tool_call_for_task(self, user_id: str, task: Dict[str, Any], last_error: Optional[str] = None) -> \
-    Optional[Dict[str, Any]]:
+            Optional[Dict[str, Any]]:
         mission_log_service = self.service_manager.mission_log_service
         foundry_manager = self.service_manager.foundry_manager
         development_team_service = self.service_manager.development_team_service
@@ -59,7 +59,8 @@ class ConductorService:
 
         if found_paths:
             for relative_path_str in sorted(list(found_paths)):
-                if '/' not in relative_path_str and not relative_path_str.endswith(('.py', '.md', '.txt', '.json', '.toml')):
+                if '/' not in relative_path_str and not relative_path_str.endswith(
+                        ('.py', '.md', '.txt', '.json', '.toml')):
                     continue
 
                 file_content = project_manager.read_file(relative_path_str)
@@ -85,15 +86,18 @@ class ConductorService:
                             if functions: context_parts.append(f"- Functions: {', '.join(sorted(list(functions)))}")
                             if classes: context_parts.append(f"- Classes: {', '.join(sorted(list(classes)))}")
                             if not any([imports, functions, classes]):
-                                context_parts.append("- The file is valid Python but contains no top-level definitions.")
+                                context_parts.append(
+                                    "- The file is valid Python but contains no top-level definitions.")
                             active_file_context_parts.append("\n".join(context_parts))
                         except (SyntaxError, TypeError) as e:
-                            self.log("warning", f"Context Weaver: Could not parse {relative_path_str}, providing raw content. Error: {e}")
+                            self.log("warning",
+                                     f"Context Weaver: Could not parse {relative_path_str}, providing raw content. Error: {e}")
                             active_file_context_parts.append(f"{context_header}\n```\n{file_content[:1000]}...\n```")
                     else:
                         active_file_context_parts.append(f"{context_header}\n```\n{file_content[:1000]}...\n```")
                 else:
-                    active_file_context_parts.append(f"{context_header}\n- This file does not exist yet. You may need to create it.")
+                    active_file_context_parts.append(
+                        f"{context_header}\n- This file does not exist yet. You may need to create it.")
 
         active_file_context = "\n\n".join(active_file_context_parts)
         if not active_file_context:
@@ -110,7 +114,8 @@ class ConductorService:
                     context_parts.append(f"```python\n# {source_info}\n{chunk['document']}\n```")
                 vector_context = "\n\n".join(context_parts)
 
-        file_structure = "\n".join(sorted(project_manager.get_project_files().keys())) or "The project is currently empty."
+        file_structure = "\n".join(
+            sorted(project_manager.get_project_files().keys())) or "The project is currently empty."
         available_tools_json = json.dumps(foundry_manager.get_llm_tool_definitions(), indent=2)
 
         prompt = CODER_PROMPT.format(
@@ -124,27 +129,21 @@ class ConductorService:
         )
 
         messages = [{"role": "user", "content": prompt}]
-        response_str = await development_team_service._unified_llm_streamer(int(user_id), "coder", messages, is_json=True)
+        response_str = await development_team_service.unified_llm_streamer(int(user_id), "coder", messages,
+                                                                           is_json=True)
 
         if response_str.startswith("Error:"):
             self.log("error", f"Conductor's LLM call failed. Details: {response_str}")
             return None
 
         try:
-            tool_call = development_team_service._parse_json_response(response_str)
+            tool_call = development_team_service.parse_json_response(response_str)
             if "tool_name" not in tool_call or "arguments" not in tool_call:
                 raise ValueError("Response must be JSON with 'tool_name' and 'arguments'.")
-            if tool_call.get("tool_name") == "write_file":
-                args = tool_call.get("arguments", {})
-                if not args.get("content") and args.get("task_description"):
-                    generated_code = await development_team_service._generate_code_for_task(
-                        user_id, args.get("path"), args.get("task_description"), self.original_user_goal, task['id']
-                    )
-                    if generated_code.startswith("Error:"):
-                        self.log("error", f"Code generation failed for write_file. Details: {generated_code}")
-                        return None
-                    tool_call["arguments"]["content"] = generated_code
-                    tool_call["arguments"].pop("task_description", None)
+
+            # --- THE FIX: This special logic is no longer needed here! ---
+            # The write_file tool is now smart enough to handle this itself.
+
             return tool_call
         except (ValueError, json.JSONDecodeError) as e:
             self.log("error", f"Conductor failed to parse LLM tool call response. Raw: {response_str}. Error: {e}")
@@ -174,12 +173,13 @@ class ConductorService:
                     all_successful = False
                     continue
                 if original_snippet not in current_content:
-                    self.log("warning", f"Final Polish: Snippet to be replaced not found in {file_path_str}. Skipping fix.")
+                    self.log("warning",
+                             f"Final Polish: Snippet to be replaced not found in {file_path_str}. Skipping fix.")
                     continue
                 new_content = current_content.replace(original_snippet, fixed_snippet, 1)
                 project_manager.write_file(file_path_str, new_content)
                 self.log("info", f"Final Polish: Applied fix to {file_path_str}")
-                await self._post_chat_message(user_id, "Conductor", f"Patched bug in `{file_path_str}`.")
+                await self.post_chat_message(user_id, "Conductor", f"Patched bug in `{file_path_str}`.")
             except Exception as e:
                 self.log("error", f"Final Polish: Failed to apply fix to {fix.get('file_path')}. Error: {e}")
                 all_successful = False
@@ -207,12 +207,12 @@ class ConductorService:
         mission_log_service = self.service_manager.mission_log_service
         tool_runner_service = self.service_manager.tool_runner_service
         try:
-            await self._post_chat_message(user_id, "Conductor", "Mission dispatched. Beginning autonomous execution.")
+            await self.post_chat_message(user_id, "Conductor", "Mission dispatched. Beginning autonomous execution.")
             await websocket_manager.broadcast_to_user({"type": "agent_status", "status": "thinking"}, user_id)
             while True:
                 if not await mission_control.is_mission_running(user_id):
                     self.log("info", f"Mission for user {user_id} was stopped by request.")
-                    await self._post_chat_message(user_id, "Conductor", "Mission execution halted by user.")
+                    await self.post_chat_message(user_id, "Conductor", "Mission execution halted by user.")
                     break
                 pending_tasks = mission_log_service.get_tasks(done=False)
                 if not pending_tasks:
@@ -230,42 +230,55 @@ class ConductorService:
                     if not await mission_control.is_mission_running(user_id):
                         break
                     self.log("info", f"Executing task {current_task['id']}: {current_task['description']}")
-                    tool_call = await self._get_tool_call_for_task(user_id, current_task, current_task.get('last_error'))
+                    tool_call = await self._get_tool_call_for_task(user_id, current_task,
+                                                                   current_task.get('last_error'))
                     if not tool_call:
                         error_msg = f"Could not determine a tool call for task: '{current_task['description']}'"
                         current_task['last_error'] = error_msg
                         retry_count += 1
                         continue
-                    result = await tool_runner_service.run_tool_by_dict(tool_call, user_id=user_id)
+
+                    # Pass necessary context for code generation to the tool runner
+                    result = await tool_runner_service.run_tool_by_dict(
+                        tool_call,
+                        user_id=user_id,
+                        current_task_id=current_task['id'],
+                        user_idea=self.original_user_goal
+                    )
+
                     result_is_error, error_message = self._is_result_an_error(result)
                     if not result_is_error:
                         await mission_log_service.mark_task_as_done(user_id, current_task['id'])
-                        await self._post_chat_message(user_id, "Conductor", f"Task completed: {current_task['description']}")
+                        await self.post_chat_message(user_id, "Conductor",
+                                                     f"Task completed: {current_task['description']}")
                         task_succeeded = True
                         break
                     else:
                         current_task['last_error'] = error_message
                         retry_count += 1
                         self.log("warning", f"Task {current_task['id']} failed. Error: {error_message}.")
-                        await self._post_chat_message(user_id, "Conductor", f"Task failed, retrying. Error: {error_message}", is_error=True)
+                        await self.post_chat_message(user_id, "Conductor",
+                                                     f"Task failed, retrying. Error: {error_message}", is_error=True)
                 if not task_succeeded and await mission_control.is_mission_running(user_id):
                     self.log("error", f"Task {current_task['id']} failed after retries. Re-planning.")
-                    await self._post_chat_message(user_id, "Aura", "I'm stuck. Rethinking my approach.", is_error=True)
+                    await self.post_chat_message(user_id, "Aura", "I'm stuck. Rethinking my approach.", is_error=True)
                     await self._execute_strategic_replan(user_id, current_task)
                 else:
                     await asyncio.sleep(0.5)
         except Exception as e:
             logger.error(f"Critical error during mission for user {user_id}: {e}", exc_info=True)
-            await self._post_chat_message(user_id, "Aura", f"A critical error stopped the mission: {e}", is_error=True)
+            await self.post_chat_message(user_id, "Aura", f"A critical error stopped the mission: {e}", is_error=True)
             await websocket_manager.broadcast_to_user({"type": "mission_failure", "content": str(e)}, user_id)
 
     def _is_result_an_error(self, result: any) -> (bool, Optional[str]):
         if result is None:
             return True, "Tool returned an empty result, which indicates a potential failure."
-        if isinstance(result, str) and (result.strip().lower().startswith("error") or "failed" in result.strip().lower()):
+        if isinstance(result, str) and (
+                result.strip().lower().startswith("error") or "failed" in result.strip().lower()):
             return True, result
         if isinstance(result, dict) and result.get('status', 'success').lower() in ["failure", "error"]:
-            return True, result.get('summary') or result.get('full_output') or "Tool indicated failure without a detailed message."
+            return True, result.get('summary') or result.get(
+                'full_output') or "Tool indicated failure without a detailed message."
         return False, None
 
     async def _execute_strategic_replan(self, user_id: str, failed_task: Dict):
@@ -278,10 +291,10 @@ class ConductorService:
         summary = await self.service_manager.development_team_service.generate_mission_summary(
             user_id, self.service_manager.mission_log_service.get_tasks()
         )
-        await self._post_chat_message(user_id, "Aura", summary)
+        await self.post_chat_message(user_id, "Aura", summary)
         await websocket_manager.broadcast_to_user({"type": "mission_success"}, user_id)
 
-    async def _post_chat_message(self, user_id: str, sender: str, message: str, is_error: bool = False):
+    async def post_chat_message(self, user_id: str, sender: str, message: str, is_error: bool = False):
         if message and message.strip():
             msg_data = {"type": "aura_response" if sender.lower() == 'aura' else "system_log", "content": message}
             if is_error:
