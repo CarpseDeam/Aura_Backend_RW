@@ -58,19 +58,14 @@ async def stream_llm_response(
             if request.is_json:
                 json_accumulator += chunk
 
-                # Use brace counting to ensure we are at the top level of the JSON object
-                # before yielding a phase. This prevents firing on nested keys.
-                # A simple check for brace_counter == 1 is effective here.
-                open_braces = chunk.count('{')
-                close_braces = chunk.count('}')
-
-                if not in_json_block and '{' in chunk:
+                if not in_json_block and '{' in json_accumulator:
                     in_json_block = True
 
                 if in_json_block:
-                    brace_counter += open_braces
-                    brace_counter -= close_braces
+                    brace_counter += chunk.count('{')
+                    brace_counter -= chunk.count('}')
 
+                    # Only check for phases at the top level of the JSON object
                     if brace_counter == 1:
                         if '"draft_plan":' in json_accumulator and 'draft_plan' not in phases_yielded:
                             yield json.dumps({"type": "phase", "content": "Drafting initial plan..."}) + "\n"
@@ -86,7 +81,6 @@ async def stream_llm_response(
 
                 if brace_counter <= 0 and in_json_block:
                     in_json_block = False
-
             else:
                 yield json.dumps({"type": "chunk", "content": chunk}) + "\n"
 
@@ -100,7 +94,7 @@ async def stream_llm_response(
 
     except Exception as e:
         error_message = f"A critical error occurred in the AI microservice: {e}"
-        print(error_message)
+        print(f"ERROR in stream_llm_response: {error_message}")
         yield json.dumps({"type": "system_log", "content": error_message}) + "\n"
 
 
