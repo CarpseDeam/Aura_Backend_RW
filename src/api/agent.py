@@ -124,6 +124,16 @@ async def run_initial_code_index(
         logger.info(f"BACKGROUND: Successfully completed initial code intelligence index for {project_name}")
 
 
+@background_task_handler(error_message_prefix="Background code re-indexing failed")
+async def run_code_reindex_task(services: ServiceManager, user_id: int, project_name: str, file_path_str: str, content: str, **kwargs):
+    """Wrapper to run the code re-indexing task in the background."""
+    project_path_str = services.project_manager.load_project(project_name)
+    cis: CodeIntelligenceService = services.code_intelligence_service
+    if cis and project_path_str:
+        cis.load_for_project(Path(project_path_str))
+        await cis.update_index_for_file(Path(file_path_str), content)
+
+
 router = APIRouter(
     prefix="/projects",
     tags=["Project Management"]
@@ -399,11 +409,3 @@ async def write_project_file_content(
     )
 
     return None
-
-@background_task_handler(error_message_prefix="Background code re-indexing failed")
-async def run_code_reindex_task(services: ServiceManager, user_id: int, project_name: str, file_path_str: str, content: str, **kwargs):
-    project_path_str = services.project_manager.load_project(project_name)
-    cis: CodeIntelligenceService = services.code_intelligence_service
-    if cis and project_path_str:
-        cis.load_for_project(Path(project_path_str))
-        await cis.update_index_for_file(Path(file_path_str), content)

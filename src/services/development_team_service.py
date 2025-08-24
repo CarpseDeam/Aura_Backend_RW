@@ -14,7 +14,8 @@ from pathlib import Path
 from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
 from src.prompts.creative import (ARCHITECT_PROMPT, SEQUENCER_PROMPT, AURA_REPLANNER_PROMPT,
-                                  AURA_MISSION_SUMMARY_PROMPT, INTENT_DETECTION_PROMPT)
+                                  AURA_MISSION_SUMMARY_PROMPT)
+from src.prompts.intent import INTENT_DETECTION_PROMPT
 from src.prompts.coder import CODER_PROMPT_STREAMING
 from src.prompts.master_rules import SENIOR_ARCHITECT_HEURISTIC_RULE, TYPE_HINTING_RULE, DOCSTRING_RULE, \
     CLEAN_CODE_RULE, MAESTRO_CODER_PHILOSOPHY_RULE, RAW_CODE_OUTPUT_RULE
@@ -251,7 +252,7 @@ class DevelopmentTeamService:
             context_lines.append(f"Next Task (ID {next_task['id']}): {next_task['description']} [Status: Pending]")
         return "\n".join(context_lines)
 
-    async def _generate_code_for_task(self, user_id: str, path: str, task_description: str, user_idea: str,
+    async def generate_code_for_task(self, user_id: str, path: str, task_description: str, user_idea: str,
                                       current_task_id: int) -> str:
         project_manager = self.service_manager.project_manager
         mission_log_service = self.service_manager.mission_log_service
