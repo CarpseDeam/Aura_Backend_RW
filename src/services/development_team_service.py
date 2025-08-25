@@ -16,6 +16,7 @@ from src.event_bus import EventBus
 from src.prompts.creative import (ARCHITECT_PROMPT, SEQUENCER_PROMPT, AURA_REPLANNER_PROMPT,
                                   AURA_MISSION_SUMMARY_PROMPT)
 from src.prompts.intent import INTENT_DETECTION_PROMPT
+from src.prompts.auditor import AUDITOR_PROMPT
 from src.prompts.coder import CODER_PROMPT_STREAMING
 from src.prompts.master_rules import SENIOR_ARCHITECT_HEURISTIC_RULE, TYPE_HINTING_RULE, DOCSTRING_RULE, \
     CLEAN_CODE_RULE, MAESTRO_CODER_PHILOSOPHY_RULE, RAW_CODE_OUTPUT_RULE
@@ -46,7 +47,6 @@ class DevelopmentTeamService:
     def refresh_llm_assignments(self):
         """
         (RE)Populates the LLM client with the latest model assignments from the DB.
-        This is critical for background tasks that use a new DB session.
         """
         user_id = self.service_manager.user_id
         db = self.service_manager.db
@@ -92,14 +92,11 @@ class DevelopmentTeamService:
                     while not response.content.at_eof():
                         if not await mission_control.is_mission_running(str(user_id)):
                             self.log("info",
-                                     f"Stop request received during code generation for user {user_id}. Halting stream.")
-                            await self._post_chat_message(str(user_id), "Conductor",
-                                                          "Code generation halted by user request.")
-                            return "Error: Code generation was cancelled by the user."
+                                     f"Stop request received during stream for user {user_id}. Halting.")
+                            return "Error: Operation was cancelled by the user."
 
                         line = await response.content.readline()
-                        if not line:
-                            continue
+                        if not line: continue
                         try:
                             data = json.loads(line)
                             if data.get("type") == "chunk" and stream_to_user_socket_as:
@@ -113,8 +110,6 @@ class DevelopmentTeamService:
                             if "final_response" in data and "reply" in data["final_response"]:
                                 final_reply = data["final_response"]["reply"]
                         except json.JSONDecodeError:
-                            if is_json:
-                                self.log("warning", f"Could not decode JSON line from stream: {line}")
                             continue
             return final_reply
         except Exception as e:
@@ -127,13 +122,102 @@ class DevelopmentTeamService:
         try:
             return json.loads(response)
         except json.JSONDecodeError:
-            match = re.search(r'''json\s*(\{.*?\})\s*''', response, re.DOTALL)
-            if match:
-                return json.loads(match.group(1))
             match = re.search(r'\{.*\}', response, re.DOTALL)
             if not match:
                 raise ValueError(f"No JSON object found in the response. Raw response: {response}")
             return json.loads(match.group(0))
+
+    async def _run_plan_audit(self, user_id: str, user_prompt: str, blueprint: Dict) -> bool:
+        """
+        Invokes the Auditor agent to verify the blueprint against the user's prompt.
+        """
+        await websocket_manager.broadcast_to_user(
+            {"type": "phase", "content": "Auditor is verifying the plan's correctness..."}, user_id)
+
+        prompt = AUDITOR_PROMPT.format(
+            user_prompt=user_prompt,
+            blueprint=json.dumps(blueprint, indent=2)
+        )
+        messages = [{"role": "user", "content": prompt}]
+        # Use a low-temp, smart model for this logical task
+        response_str = await self.unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
+
+        if not response_str or response_str.startswith("Error:"):
+            await self.handle_error(user_id, "Auditor", response_str or "Auditor returned an empty response.")
+            return False
+        try:
+            audit_result = self.parse_json_response(response_str)
+            if audit_result.get("audit_passed") is True:
+                self.log("success", "AUDIT PASSED: The plan is aligned with the user's request.")
+                return True
+            else:
+                self.log("error", "AUDIT FAILED: The plan created by the Architect was a hallucination and did not match the user's core requirements.")
+                await self.handle_error(user_id, "Auditor", "Audit failed. The Architect's plan was incorrect. Halting mission.")
+                return False
+        except (ValueError, json.JSONDecodeError) as e:
+            await self.handle_error(user_id, "Auditor", f"Failed to parse audit JSON: {e}. Raw: {response_str}")
+            return False
+
+    async def run_aura_planner_workflow(self, user_id: str, user_idea: str, conversation_history: list,
+                                        project_name: str):
+        """
+        Orchestrates the new three-step planning assembly line: Architect -> Auditor -> Sequencer.
+        """
+        self.log("info", f"Aura planning assembly line initiated for user {user_id}: '{user_idea[:50]}...'")
+        self.refresh_llm_assignments()
+
+        # --- Phase 1: Architect ---
+        architect_prompt = ARCHITECT_PROMPT.format(user_idea=user_idea, project_name=project_name)
+        messages = [{"role": "user", "content": architect_prompt}]
+        blueprint_response = await self.unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
+
+        if not blueprint_response or blueprint_response.strip().startswith("Error:"):
+            await self.handle_error(user_id, "Architect", blueprint_response or "Architect AI returned an empty response.")
+            return
+
+        try:
+            blueprint_data = self.parse_json_response(blueprint_response)
+            final_blueprint = blueprint_data.get("final_blueprint")
+            if not final_blueprint or not isinstance(final_blueprint, dict):
+                raise ValueError("Architect's final_blueprint was missing or malformed.")
+        except (ValueError, json.JSONDecodeError) as e:
+            await self.handle_error(user_id, "Architect", f"Failed to create a valid blueprint: {e}.")
+            return
+
+        # --- Phase 2: Auditor (NEW) ---
+        audit_passed = await self._run_plan_audit(user_id, user_idea, final_blueprint)
+        if not audit_passed:
+            return  # Stop the entire process if the audit fails.
+
+        # --- Phase 3: Sequencer ---
+        await websocket_manager.broadcast_to_user(
+            {"type": "phase", "content": "Sequencer is generating the detailed task list..."}, str(user_id))
+        sequencer_prompt = SEQUENCER_PROMPT.format(blueprint=json.dumps(final_blueprint, indent=2))
+        messages = [{"role": "user", "content": sequencer_prompt}]
+        plan_response = await self.unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
+
+        if not plan_response or plan_response.strip().startswith("Error:"):
+            await self.handle_error(user_id, "Sequencer", plan_response or "Sequencer AI returned an empty response.")
+            return
+
+        try:
+            plan_data = self.parse_json_response(plan_response)
+            final_plan_steps = plan_data.get("final_plan", [])
+            if not final_plan_steps or not isinstance(final_plan_steps, list):
+                raise ValueError("Sequencer's final_plan was empty or malformed.")
+
+            dependencies = final_blueprint.get("dependencies", [])
+            if dependencies:
+                final_plan_steps.insert(0, f"Add the following dependencies to requirements.txt: {', '.join(dependencies)}")
+
+            mission_log_service = self.service_manager.mission_log_service
+            await mission_log_service.set_initial_plan(user_id, final_plan_steps, user_idea)
+            await self._post_chat_message(user_id, "Aura",
+                                          "Plan approved by Auditor. Review in 'Agent TODO' and dispatch to begin.")
+        except (ValueError, json.JSONDecodeError) as e:
+            await self.handle_error(user_id, "Sequencer", f"Failed to create a valid plan: {e}.")
+
+    # ... (the rest of the file remains the same) ...
 
     async def determine_user_intent(self, user_id: str, user_prompt: str, conversation_history: list) -> str:
         self.log("info", f"Determining intent for user {user_id}: '{user_prompt[:50]}...'")
@@ -172,65 +256,6 @@ class DevelopmentTeamService:
             await self.handle_error(user_id, "Companion", response_str)
             return "I'm sorry, I seem to be having trouble connecting to my creative core right now."
         return response_str
-
-    async def run_aura_planner_workflow(self, user_id: str, user_idea: str, conversation_history: list,
-                                        project_name: str):
-        """
-        Orchestrates the new two-step planning assembly line: Architect -> Sequencer.
-        """
-        self.log("info", f"Aura planning assembly line initiated for user {user_id}: '{user_idea[:50]}...'")
-        self.refresh_llm_assignments()
-
-        # --- Phase 1: Architect ---
-        architect_prompt = ARCHITECT_PROMPT.format(user_idea=user_idea, project_name=project_name)
-        messages = [{"role": "user", "content": architect_prompt}]
-        blueprint_response = await self.unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
-
-        if not blueprint_response or blueprint_response.strip().startswith("Error:"):
-            error_content = blueprint_response or "The Architect AI returned an empty or invalid response."
-            await self.handle_error(user_id, "Architect", error_content)
-            return
-
-        try:
-            blueprint_data = self.parse_json_response(blueprint_response)
-            final_blueprint = blueprint_data.get("final_blueprint")
-            if not final_blueprint or not isinstance(final_blueprint, dict):
-                raise ValueError("Architect's final_blueprint was missing or malformed.")
-        except (ValueError, json.JSONDecodeError) as e:
-            await self.handle_error(user_id, "Architect", f"Failed to create a valid blueprint: {e}.")
-            self.log("error", f"Architect failure for user {user_id}. Raw response: {blueprint_response}")
-            return
-
-        # --- Phase 2: Sequencer ---
-        await websocket_manager.broadcast_to_user(
-            {"type": "phase", "content": "Sequencer is generating the detailed task list..."}, str(user_id))
-        sequencer_prompt = SEQUENCER_PROMPT.format(blueprint=json.dumps(final_blueprint, indent=2))
-        messages = [{"role": "user", "content": sequencer_prompt}]
-        plan_response = await self.unified_llm_streamer(int(user_id), "planner", messages, is_json=True)
-
-        if not plan_response or plan_response.strip().startswith("Error:"):
-            error_content = plan_response or "The Sequencer AI returned an empty or invalid response."
-            await self.handle_error(user_id, "Sequencer", error_content)
-            return
-
-        try:
-            plan_data = self.parse_json_response(plan_response)
-            final_plan_steps = plan_data.get("final_plan", [])
-            if not final_plan_steps or not isinstance(final_plan_steps, list):
-                raise ValueError("Sequencer's final_plan was empty or malformed.")
-
-            dependencies = final_blueprint.get("dependencies", [])
-            if dependencies:
-                deps_str = ", ".join(dependencies)
-                final_plan_steps.insert(0, f"Add the following dependencies to requirements.txt: {deps_str}")
-
-            mission_log_service = self.service_manager.mission_log_service
-            await mission_log_service.set_initial_plan(user_id, final_plan_steps, user_idea)
-            await self._post_chat_message(user_id, "Aura",
-                                          "I've created a plan. Review it in 'Agent TODO' and click 'Dispatch Aura' to begin.")
-        except (ValueError, json.JSONDecodeError) as e:
-            await self.handle_error(user_id, "Sequencer", f"Failed to create a valid plan: {e}.")
-            self.log("error", f"Sequencer failure for user {user_id}. Raw response: {plan_response}")
 
     def _get_relevant_plan_context(self, current_task_id: int, full_plan: List[Dict]) -> str:
         context_lines = []
