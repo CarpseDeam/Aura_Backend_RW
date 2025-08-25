@@ -63,9 +63,15 @@ async def run_planner_task(
     project_path_str = services.project_manager.load_project(project_name)
     services.mission_log_service.load_log_for_active_project()
 
-    vcs: VectorContextService = services.vector_context_service
-    if vcs and project_path_str:
-        vcs.load_for_project(Path(project_path_str), user_id)
+    try:
+        vcs: VectorContextService = services.vector_context_service
+        if vcs and project_path_str:
+            vcs.load_for_project(Path(project_path_str), user_id)
+    except Exception as e:
+        logger.error(f"CRITICAL: VectorContextService failed to load for planner, but continuing without RAG. Error: {e}", exc_info=True)
+        await websocket_manager.broadcast_to_user({
+            "type": "system_log", "content": f"Warning: AI context engine (RAG) failed to load. Agent performance may be degraded. Error: {e}"
+        }, str(user_id))
 
     await services.development_team_service.run_aura_planner_workflow(
         user_id=str(user_id), user_idea=user_idea, conversation_history=history, project_name=project_name
@@ -78,9 +84,15 @@ async def run_dispatch_task(services: ServiceManager, user_id: int, project_name
     project_path_str = services.project_manager.load_project(project_name)
     services.mission_log_service.load_log_for_active_project()
 
-    vcs: VectorContextService = services.vector_context_service
-    if vcs and project_path_str:
-        vcs.load_for_project(Path(project_path_str), user_id)
+    try:
+        vcs: VectorContextService = services.vector_context_service
+        if vcs and project_path_str:
+            vcs.load_for_project(Path(project_path_str), user_id)
+    except Exception as e:
+        logger.error(f"CRITICAL: VectorContextService failed to load for dispatcher, but continuing without RAG. Error: {e}", exc_info=True)
+        await websocket_manager.broadcast_to_user({
+            "type": "system_log", "content": f"Warning: AI context engine (RAG) failed to load. Agent performance may be degraded. Error: {e}"
+        }, str(user_id))
 
     await services.conductor_service.execute_mission_in_background(user_id=str(user_id))
 
@@ -172,10 +184,10 @@ async def handle_agent_prompt(
     if not project_path:
         raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found.")
 
-    vcs: VectorContextService = aura_services.vector_context_service
-    if vcs:
-        vcs.load_for_project(Path(project_path), current_user.id)
     aura_services.mission_log_service.load_log_for_active_project()
+
+    # Intentionally moved VCS loading into the background task to prevent it from crashing the main worker.
+    # This is a critical stability fix.
 
     # 2. Determine intent
     dev_team: DevelopmentTeamService = aura_services.development_team_service
@@ -187,7 +199,6 @@ async def handle_agent_prompt(
 
     # 3. Route based on intent
     if intent == "PLAN":
-        # Use existing background task runner for planning
         background_tasks.add_task(
             run_planner_task,
             services=aura_services,
@@ -199,10 +210,6 @@ async def handle_agent_prompt(
         return {"message": "Aura has received your request and is formulating a plan."}
 
     elif intent == "CHAT":
-        # --- THE FIX ---
-        # The chat operation is also a potentially long-running stream.
-        # It MUST be run in the background to prevent the worker from timing out.
-        # The actual chat content is delivered via the WebSocket, not the HTTP response.
         background_tasks.add_task(
             dev_team.run_companion_chat,
             user_id=str(current_user.id),
@@ -213,7 +220,6 @@ async def handle_agent_prompt(
 
     else:  # Fallback/Error
         logger.error(f"Intent detection failed for user {current_user.id}. Got unexpected intent: '{intent}'")
-        # Fallback to chat behavior as it's safer.
         background_tasks.add_task(
             dev_team.run_companion_chat,
             user_id=str(current_user.id),
@@ -229,7 +235,6 @@ async def dispatch_agent_mission(
         current_user: User = Depends(get_current_user),
         aura_services: ServiceManager = Depends(get_aura_services)
 ):
-    # No need to load project here; the background task will handle it.
     background_tasks.add_task(
         run_dispatch_task,
         services=aura_services,
@@ -241,12 +246,9 @@ async def dispatch_agent_mission(
 
 @router.post("/{project_name}/stop", status_code=status.HTTP_200_OK)
 async def stop_agent_mission(
-    project_name: str, # Included for path consistency, but not strictly needed
-    current_user: User = Depends(get_current_user)
+        project_name: str,
+        current_user: User = Depends(get_current_user)
 ):
-    """
-    Signals the running mission for the current user to stop gracefully.
-    """
     user_id = str(current_user.id)
     logger.info(f"Received stop request for user {user_id}'s mission.")
     await mission_control.request_mission_stop(user_id)
@@ -294,29 +296,29 @@ async def load_project_and_auto_index(
     cis: CodeIntelligenceService = aura_services.code_intelligence_service
     message = f"Project '{project_name}' loaded successfully."
 
-    if vcs:
-        # --- THE FIX ---
-        vcs.load_for_project(project_path, current_user.id)
-        # --- END FIX ---
-        # Also load the code intelligence service and trigger its indexer
-        if cis:
-            cis.load_for_project(project_path)
-            background_tasks.add_task(
-                run_initial_code_index,
-                services=aura_services,
-                user_id=current_user.id,
-                project_name=project_name
-            )
+    try:
+        if vcs:
+            vcs.load_for_project(project_path, current_user.id)
+            if cis:
+                cis.load_for_project(project_path)
+                background_tasks.add_task(
+                    run_initial_code_index,
+                    services=aura_services,
+                    user_id=current_user.id,
+                    project_name=project_name
+                )
+            if vcs.collection and vcs.collection.count() == 0:
+                message += " Initial project scan for AI context has been started in the background."
+                background_tasks.add_task(
+                    run_initial_project_index,
+                    services=aura_services,
+                    user_id=current_user.id,
+                    project_name=project_name
+                )
+    except Exception as e:
+        logger.error(f"CRITICAL: VectorContextService failed during project load. RAG will be unavailable. Error: {e}", exc_info=True)
+        message += f" [WARNING: Failed to initialize AI context engine: {e}]"
 
-
-        if vcs.collection and vcs.collection.count() == 0:
-            message += " Initial project scan for AI context has been started in the background."
-            background_tasks.add_task(
-                run_initial_project_index,
-                services=aura_services,
-                user_id=current_user.id,
-                project_name=project_name
-            )
     try:
         file_tree = project_manager.get_file_tree()
         await websocket_manager.broadcast_to_user({
@@ -401,7 +403,6 @@ async def write_project_file_content(
         content=request.content
     )
 
-    # Also trigger the code intelligence re-indexer
     background_tasks.add_task(
         run_code_reindex_task,
         services=aura_services,
