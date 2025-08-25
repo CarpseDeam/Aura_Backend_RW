@@ -10,6 +10,7 @@ import aiohttp
 from typing import TYPE_CHECKING, Dict, List, Optional, Any
 from sqlalchemy.orm import Session
 from pathlib import Path
+import logging
 
 from src.core.websockets import websocket_manager
 from src.event_bus import EventBus
@@ -27,6 +28,9 @@ from src.prompts.polish import METICULOUS_LINTER_PROMPT
 
 if TYPE_CHECKING:
     from src.core.managers import ServiceManager
+
+# Setup basic logging
+logger = logging.getLogger(__name__)
 
 
 class DevelopmentTeamService:
@@ -56,7 +60,7 @@ class DevelopmentTeamService:
             assignments_from_db = crud.get_assignments_for_user(db, user_id=user_id)
             llm_client.set_assignments({a.role_name: a.model_id for a in assignments_from_db})
             llm_client.set_temperatures({a.role_name: a.temperature for a in assignments_from_db})
-            print(f"LLM client assignments refreshed for user {user_id}.")
+            logger.info(f"LLM client assignments refreshed for user {user_id}.")
 
     async def unified_llm_streamer(self, user_id: int, role: str, messages: List[Dict[str, Any]],
                                    is_json: bool = False, tools: Optional[List[Dict[str, Any]]] = None,
@@ -65,6 +69,7 @@ class DevelopmentTeamService:
         llm_client = self.service_manager.llm_client
         db = self.service_manager.db
         if not self.llm_server_url:
+            logger.critical("FATAL: LLM_SERVER_URL is not configured in the environment.")
             return "Error: LLM_SERVER_URL is not configured."
 
         provider_name, model_name = llm_client.get_model_for_role(role)
@@ -82,13 +87,16 @@ class DevelopmentTeamService:
         try:
             async with aiohttp.ClientSession() as session:
                 invoke_url = f"{self.llm_server_url}/invoke"
+                logger.info(f"AURA BACKEND: Making POST request to LLM Server at: {invoke_url}")
                 async with session.post(invoke_url, json=payload, headers=headers, timeout=300) as response:
                     if response.status != 200:
                         error_detail = await response.text()
+                        logger.error(f"LLM Server returned non-200 status: {response.status}. Details: {error_detail}")
                         await self._post_chat_message(str(user_id), "Aura",
                                                       f"Error from AI microservice: {error_detail}", is_error=True)
                         return f"Error: LLM service failed with status {response.status}. Details: {error_detail}"
 
+                    logger.info("AURA BACKEND: Connection to LLM Server successful. Streaming response...")
                     while not response.content.at_eof():
                         if not await mission_control.is_mission_running(str(user_id)):
                             self.log("info",
@@ -112,9 +120,14 @@ class DevelopmentTeamService:
                         except json.JSONDecodeError:
                             continue
             return final_reply
+        except aiohttp.ClientConnectorError as e:
+            error_msg = f"AURA BACKEND: CRITICAL CONNECTION ERROR. Could not connect to the LLM Server at {self.llm_server_url}. Is it running? Details: {e}"
+            logger.critical(error_msg, exc_info=True)
+            await self._post_chat_message(str(user_id), "Aura", error_msg, is_error=True)
+            return f"Error: {error_msg}"
         except Exception as e:
             error_msg = f"An unexpected error occurred during streaming: {e}"
-            self.log("error", f"Error during unified streaming call for user {user_id}: {e}")
+            logger.error(f"Error during unified streaming call for user {user_id}: {e}", exc_info=True)
             await self._post_chat_message(str(user_id), "Aura", error_msg, is_error=True)
             return error_msg
 

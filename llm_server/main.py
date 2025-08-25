@@ -5,8 +5,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Type, Optional, AsyncGenerator
 import json
+import logging
 
 from providers import BaseProvider, GoogleProvider, OpenAIProvider, AnthropicProvider, DeepseekProvider
+
+# Setup basic logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Aura LLM Server",
@@ -98,7 +103,7 @@ async def stream_llm_response(
 
     except Exception as e:
         error_message = f"A critical error occurred in the AI microservice: {e}"
-        print(f"ERROR in stream_llm_response: {error_message}")
+        logger.error(f"ERROR in stream_llm_response: {error_message}", exc_info=True)
         yield json.dumps({"type": "system_log", "content": error_message}) + "\n"
 
 
@@ -110,11 +115,16 @@ async def invoke_llm(
     """
     Receives a request and invokes the specified LLM provider, streaming the response.
     """
+    logger.info("✅ LLM SERVER: /invoke endpoint hit.")
+    logger.info(f"Received request for provider: {request.provider_name}, model: {request.model_name}")
+
     if not x_provider_api_key:
+        logger.error("Provider API key is missing from headers.")
         raise HTTPException(status_code=400, detail="Provider API key is missing from headers.")
 
     provider_class = PROVIDER_MAP.get(request.provider_name)
     if not provider_class:
+        logger.error(f"Provider '{request.provider_name}' is not supported.")
         raise HTTPException(
             status_code=400,
             detail=f"Provider '{request.provider_name}' is not supported. Supported providers are: {list(PROVIDER_MAP.keys())}"
@@ -123,12 +133,14 @@ async def invoke_llm(
     try:
         provider = provider_class(x_provider_api_key)
     except ValueError as e:
+        logger.error(f"Failed to initialize provider: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to initialize provider: {e}")
 
     provider_specific_tools = None
     if request.tools:
         provider_specific_tools = provider.transform_tools_for_provider(request.tools)
 
+    logger.info("Streaming response back to client...")
     return StreamingResponse(
         stream_llm_response(provider, request, provider_specific_tools),
         media_type="application/x-ndjson"
