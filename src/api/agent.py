@@ -199,25 +199,28 @@ async def handle_agent_prompt(
         return {"message": "Aura has received your request and is formulating a plan."}
 
     elif intent == "CHAT":
-        # Run chat in the foreground. It streams via websocket.
-        await dev_team.run_companion_chat(
+        # --- THE FIX ---
+        # The chat operation is also a potentially long-running stream.
+        # It MUST be run in the background to prevent the worker from timing out.
+        # The actual chat content is delivered via the WebSocket, not the HTTP response.
+        background_tasks.add_task(
+            dev_team.run_companion_chat,
             user_id=str(current_user.id),
             user_prompt=request.prompt,
             conversation_history=request.history
         )
-        response.status_code = status.HTTP_200_OK
-        return {"message": "Chat response is being streamed via WebSocket."}
+        return {"message": "Chat request received. Response will be streamed via WebSocket."}
 
     else:  # Fallback/Error
         logger.error(f"Intent detection failed for user {current_user.id}. Got unexpected intent: '{intent}'")
         # Fallback to chat behavior as it's safer.
-        await dev_team.run_companion_chat(
+        background_tasks.add_task(
+            dev_team.run_companion_chat,
             user_id=str(current_user.id),
             user_prompt=request.prompt,
             conversation_history=request.history
         )
-        response.status_code = status.HTTP_200_OK
-        return {"message": "Could not determine intent, defaulting to chat. Response is being streamed via WebSocket."}
+        return {"message": "Could not determine intent, defaulting to chat. Response will be streamed via WebSocket."}
 
 @router.post("/dispatch", status_code=status.HTTP_202_ACCEPTED)
 async def dispatch_agent_mission(
